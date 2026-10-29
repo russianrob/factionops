@@ -67,6 +67,19 @@ test('genocideCheckDue: a yes taken for this faction is never asked again, a no 
   assert.equal(due(now - 31 * D, now - 30 * 60000, '0:1001'), false);
 });
 
+test('genocideResendDue: an answer saved for this faction goes to the server again a day after it last went, nothing else does', () => {
+  const H = 3600000, D = 24 * H, now = 400 * D;
+  const due = new Function(konst('GENOCIDE_RESEND_MS') + fn('genocideResendDue') + '\nreturn genocideResendDue;')();
+  const at = (lastSent, saved) => due(now, lastSent, saved, '1001');
+  assert.equal(at(now - 25 * H, '1:1001'), true);
+  assert.equal(at(now - 25 * H, '0:1001'), true);
+  assert.equal(at(now - 23 * H, '1:1001'), false);
+  assert.equal(at(0, '1:1001'), true);            // never timed: goes now
+  assert.equal(at(0, ''), false);                 // nothing saved
+  assert.equal(at(0, '1:1002'), false);           // saved for another faction
+  assert.equal(due(now, 0, '1:', ''), false);     // no faction
+});
+
 // ── Where the marks go ─────────────────────────────────────────────────
 
 test("isFactionInfoTab: your own faction's info tab only", () => {
@@ -214,6 +227,7 @@ test('the switch: off owes a withdrawal and asks for it at once; on clears it an
   assert.equal(gm.get('factionops_genocide_ok'), '0');
   assert.equal(gm.get('factionops_genocide_try'), '0');
   assert.equal(gm.get('factionops_genocide_has'), '');
+  assert.equal(gm.get('factionops_genocide_sent'), '0');
   assert.equal(checks.length, 2);
 });
 
@@ -224,8 +238,8 @@ function selfCheck({ share = '1', stored = {}, post = () => Promise.resolve({}) 
   const CONFIG = { SHARE_GENOCIDE: share, API_KEY: 'TESTKEY' };
   const reqs = [], posts = [];
   const check = new Function('CONFIG', 'state', 'GM_getValue', 'GM_setValue', 'httpRequest', 'postAction', 'safeParse',
-    ['GENOCIDE_HONOR_ID', 'GENOCIDE_CHECK_MS', 'GENOCIDE_RETRY_MS'].map(konst).join('')
-    + ['genocideFromHonors', 'genocideCheckDue', 'selfCheckGenocide'].map(fn).join('\n') + '\nreturn selfCheckGenocide;')(
+    ['GENOCIDE_HONOR_ID', 'GENOCIDE_CHECK_MS', 'GENOCIDE_RETRY_MS', 'GENOCIDE_RESEND_MS'].map(konst).join('')
+    + ['genocideFromHonors', 'genocideCheckDue', 'genocideResendDue', 'selfCheckGenocide'].map(fn).join('\n') + '\nreturn selfCheckGenocide;')(
     CONFIG, { jwtToken: 'jwt', myFactionId: '1001' },
     (k, dflt) => (gm.has(k) ? gm.get(k) : dflt), (k, v) => { gm.set(k, v); },
     (o) => { reqs.push(o); },
@@ -272,6 +286,51 @@ test('a yes the server took is never asked of Torn again; a no is, a month on; a
   const old = selfCheck({ stored: { factionops_genocide_ok: String(T - 2 * H), factionops_genocide_try: String(T - 2 * H) } });
   old.check(T);
   assert.equal(old.reqs.length, 1);
+});
+
+test('the saved answer goes to the server again once a day without asking Torn, so one the server lost comes back', async () => {
+  const H = 3600000, D = 24 * H, T = Date.now();
+  // A yes taken two days ago. Another device switched off and withdrew it,
+  // or the server lost it: this device still shares, so it sends it again.
+  const saved = (has) => ({ factionops_genocide_has: has, factionops_genocide_ok: String(T - 2 * D), factionops_genocide_try: String(T - 2 * D) });
+  const yes = selfCheck({ stored: saved('1:1001') });
+  yes.check(T);
+  await settle();
+  assert.deepEqual(yes.posts, [['/api/me/honors', { genocide: true }]]);
+  // Once a day, not at every sign-in, and Torn is never asked.
+  yes.check(T + 2 * H);
+  await settle();
+  assert.equal(yes.posts.length, 1);
+  yes.check(T + 25 * H);
+  await settle();
+  assert.equal(yes.posts.length, 2);
+  assert.equal(yes.reqs.length, 0);
+  // A no goes again the same way until its month is up.
+  const no = selfCheck({ stored: saved('0:1001') });
+  no.check(T);
+  await settle();
+  assert.deepEqual(no.posts, [['/api/me/honors', { genocide: false }]]);
+  assert.equal(no.reqs.length, 0);
+  // One the server refused goes again at the next sign-in.
+  const refused = selfCheck({ stored: saved('1:1001'), post: () => Promise.reject(new Error('HTTP 502')) });
+  refused.check(T);
+  await settle();
+  refused.check(T + 60000);
+  await settle();
+  assert.equal(refused.posts.length, 2);
+  // An answer read from Torn just now is not sent twice.
+  const fresh = selfCheck();
+  fresh.check(T);
+  fresh.reqs[0].onload({ responseText: HONORS });
+  await settle();
+  fresh.check(T + 2 * H);
+  await settle();
+  assert.equal(fresh.posts.length, 1);
+  // With sharing off nothing goes but a withdrawal.
+  const off = selfCheck({ share: '0', stored: saved('1:1001') });
+  off.check(T);
+  await settle();
+  assert.deepEqual(off.posts, []);
 });
 
 test('a check already on its way posts nothing once sharing is switched off', async () => {

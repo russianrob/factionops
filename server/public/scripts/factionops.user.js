@@ -8718,6 +8718,7 @@ body.wb-chain-active {
                     GM_setValue('factionops_genocide_ok', '0');
                     GM_setValue('factionops_genocide_try', '0');
                     GM_setValue('factionops_genocide_has', '');
+                    GM_setValue('factionops_genocide_sent', '0');
                 } else {
                     GM_setValue('factionops_genocide_withdraw', '1');
                 }
@@ -9731,11 +9732,13 @@ body.wb-chain-active {
     // own answers: Torn shows a player's honors to their own key only, so this
     // script reads its member's honors with that key and posts yes or no: once,
     // and again a month after a no. Honors never expire, so a yes the server
-    // took is never asked again. CONFIG.SHARE_GENOCIDE switches that off, and
-    // withdraws the answer.
+    // took is never asked again; the saved answer only goes to the server
+    // again once a day, so one it lost comes back. CONFIG.SHARE_GENOCIDE
+    // switches that off, and withdraws the answer.
     const GENOCIDE_HONOR_ID = 478;
     const GENOCIDE_CHECK_MS = 30 * 24 * 60 * 60 * 1000;   // a no, asked again a month on
     const GENOCIDE_RETRY_MS = 60 * 60 * 1000;             // one try an hour while it fails
+    const GENOCIDE_RESEND_MS = 24 * 60 * 60 * 1000;       // the saved answer, sent again a day on
     const GENOCIDE_LIST_MS = 10 * 60 * 1000;         // the faction's list, fetched again
     // The member rows' profile links on the info tab, by the class names the
     // offline highlighter and FFS read there. A row is the link's li.
@@ -9761,6 +9764,18 @@ body.wb-chain-active {
         const [has, fid] = String(saved || '').split(':');
         if (!lastOk || fid !== String(factionId || '')) return true;
         return has !== '1' && now - lastOk >= GENOCIDE_CHECK_MS;
+    }
+
+    /**
+     * Whether to send the saved answer to the server again, without asking
+     * Torn: a day after it last went, while one is saved for this faction. An
+     * answer the server lost (another device switched off and withdrew it,
+     * say) so comes back within a day.
+     */
+    function genocideResendDue(now, lastSent, saved, factionId) {
+        const [has, fid] = String(saved || '').split(':');
+        if ((has !== '1' && has !== '0') || !fid || fid !== String(factionId || '')) return false;
+        return now - lastSent >= GENOCIDE_RESEND_MS;
     }
 
     /** Your own faction's info tab (its member list), and nothing else. */
@@ -9850,10 +9865,12 @@ body.wb-chain-active {
     /**
      * This member's own honors, read with their own key, and whether Genocide
      * is among them posted to the server: once, then a month after each no,
-     * and never again after a yes the server took (genocideCheckDue). Only
-     * with sharing on, a key and a sign-in. A failure posts and saves nothing,
-     * and the next try is an hour later at the soonest. With sharing off, a
-     * withdrawal the server has not taken yet is asked for again instead.
+     * and never again after a yes the server took (genocideCheckDue). In
+     * between, the saved answer is sent again once a day without asking Torn
+     * (genocideResendDue). Only with sharing on, a key and a sign-in. A failed
+     * read posts and saves nothing, and the next try is an hour later at the
+     * soonest. With sharing off, a withdrawal the server has not taken yet is
+     * asked for again instead.
      */
     function selfCheckGenocide(now) {
         if (!state.jwtToken) return;
@@ -9870,7 +9887,15 @@ body.wb-chain-active {
         const lastOk = Number(GM_getValue('factionops_genocide_ok', '0')) || 0;
         const lastTry = Number(GM_getValue('factionops_genocide_try', '0')) || 0;
         const saved = String(GM_getValue('factionops_genocide_has', ''));
-        if (!genocideCheckDue(now, lastOk, lastTry, saved, factionId)) return;
+        if (!genocideCheckDue(now, lastOk, lastTry, saved, factionId)) {
+            const lastSent = Number(GM_getValue('factionops_genocide_sent', '0')) || 0;
+            if (genocideResendDue(now, lastSent, saved, factionId)) {
+                postAction('/api/me/honors', { genocide: saved.charAt(0) === '1' })
+                    .then(() => GM_setValue('factionops_genocide_sent', String(now)))
+                    .catch(() => {});
+            }
+            return;
+        }
         GM_setValue('factionops_genocide_try', String(now));
         httpRequest({
             method: 'GET',
@@ -9882,9 +9907,11 @@ body.wb-chain-active {
                 if (!answer) return;
                 postAction('/api/me/honors', { genocide: answer.has })
                     .then(() => {
+                        const at = String(Date.now());
                         // Kept with the faction it went to: another faction is asked afresh.
                         GM_setValue('factionops_genocide_has', (answer.has ? '1' : '0') + ':' + factionId);
-                        GM_setValue('factionops_genocide_ok', String(Date.now()));
+                        GM_setValue('factionops_genocide_ok', at);
+                        GM_setValue('factionops_genocide_sent', at);
                     })
                     .catch(() => {});
             },
