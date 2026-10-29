@@ -60,33 +60,33 @@ test("foldHits keeps each member's earliest qualifying hit", () => {
 
 // ── A member's own answer ───────────────────────────────────────────────
 
-test("parseSelfReport takes true, false or null, and nothing else", () => {
-  assert.deepEqual(g.parseSelfReport({ genocide: true, awardedAt: 1690000000 }), { has: true, at: 1690000000 });
-  assert.deepEqual(g.parseSelfReport({ genocide: true }), { has: true, at: null });
-  assert.deepEqual(g.parseSelfReport({ genocide: true, awardedAt: "x" }), { has: true, at: null });
-  assert.deepEqual(g.parseSelfReport({ genocide: true, awardedAt: -5 }), { has: true, at: null });
-  assert.deepEqual(g.parseSelfReport({ genocide: false, awardedAt: 1690000000 }), { has: false, at: null });
-  assert.deepEqual(g.parseSelfReport({ genocide: null }), { has: null, at: null });
+test("parseSelfReport takes true, false or null, and nothing else; an award date is never kept", () => {
+  assert.deepEqual(g.parseSelfReport({ genocide: true, awardedAt: 1690000000 }), { has: true });
+  assert.deepEqual(g.parseSelfReport({ genocide: true }), { has: true });
+  assert.deepEqual(g.parseSelfReport({ genocide: false, awardedAt: 1690000000 }), { has: false });
+  assert.deepEqual(g.parseSelfReport({ genocide: null }), { has: null });
   for (const b of [{}, { genocide: "true" }, { genocide: 1 }, null, undefined, "x"]) {
     assert.equal(g.parseSelfReport(b), null);
   }
 });
 
-test("genocideView: a faction hit beats a self 'no', a self 'yes' counts, a 'no' keeps its date, a withdrawal forgets", () => {
+// The settings row promises "only yes or no": no award date and no day of
+// the member's last check reach the faction, though the store keeps the check
+// time for itself.
+test("genocideView: a faction hit beats a self 'no', a self 'yes' counts, only yes or no reaches the faction, a withdrawal forgets", () => {
   const s = empty();
   g.foldHits(s, g.bonusHolders(REPORT));
-  g.foldSelf(s, "1000002", { has: false, at: null }, 1650000123); // an old "no", from before the hit
-  g.foldSelf(s, "1000005", { has: true, at: 1690000000 }, 1700000100);
-  g.foldSelf(s, "1000006", { has: false, at: null }, 1700000200);
-  g.foldSelf(s, "1000007", { has: true, at: null }, 1700000300);
+  g.foldSelf(s, "1000002", { has: false }, 1650000123); // an old "no", from before the hit
+  g.foldSelf(s, "1000005", { has: true }, 1700000100);
+  g.foldSelf(s, "1000006", { has: false }, 1700000200);
   assert.deepEqual(g.genocideView(s), {
     1000002: { has: true, via: "hit", hit: 2500, start: 1700000000 },
     1000003: { has: true, via: "hit", hit: 5000, start: 1700000000 },
-    1000005: { has: true, via: "self", at: 1690000000 },
-    1000006: { has: false, checkedAt: 1700000200 },
-    1000007: { has: true, via: "self", at: null },
+    1000005: { has: true, via: "self" },
+    1000006: { has: false },
   });
-  g.foldSelf(s, "1000006", { has: null, at: null }, 1700000400);
+  assert.deepEqual(s.self["1000006"], { has: false, checkedAt: 1700000200 });
+  g.foldSelf(s, "1000006", { has: null }, 1700000400);
   assert.equal("1000006" in g.genocideView(s), false);
 });
 
@@ -141,8 +141,29 @@ test("scanFinishedChains stops at its budget", async () => {
   const dir = tmp(), now = 1800000000;
   const asked = [];
   const chains = [900030, 900031, 900032].map((id) => ({ id, chain: 2600, end: now - 7200 }));
-  await g.scanFinishedChains(async (id) => { asked.push(id); return null; }, "1004", chains, { nowS: now, dir, budget: 2 });
+  const report = (id) => ({ id, start: 1, bonuses: [{ attacker_id: 1000014, chain: 2500, respect: 1280 }] });
+  await g.scanFinishedChains(async (id) => { asked.push(id); return report(id); }, "1004", chains, { nowS: now, dir, budget: 2 });
   assert.equal(asked.length, 2);
+});
+
+// Every chain of 2,500+ hits has a bonus worth 1,000+ (the 2,500th pays
+// 1,280), so a report without one is not the report expected: a changed
+// answer from Torn must not mark the chain read and lose its holders for good.
+test("a chain of 2,500+ hits whose report shows no 1,000+ bonus stays unread, with a warning", async () => {
+  const dir = tmp(), now = 1800000000;
+  const chains = [900040, 900041].map((id) => ({ id, chain: 2600, end: now - 7200 }));
+  const reports = { 900040: { id: 900040, start: 1750000123, bonuses: [] }, 900041: null };
+  const warned = [], was = console.warn;
+  console.warn = (m) => { warned.push(String(m)); };
+  try {
+    assert.equal((await g.scanFinishedChains(async (id) => reports[id], "1005", chains, { nowS: now, dir })).found, 0);
+  } finally {
+    console.warn = was;
+  }
+  assert.deepEqual(readStore(dir, "1005").scanned, {});
+  for (const id of ["900040", "900041"]) {
+    assert.equal(warned.filter((m) => m.startsWith("[genocide]") && m.includes(id)).length, 1, id);
+  }
 });
 
 test("scanLiveChain folds the latest report and never marks it read", async () => {
@@ -162,11 +183,11 @@ test("a member's answer that lands while a scan waits on Torn survives the scan'
   let release;
   const gate = new Promise((r) => { release = r; });
   const scan = g.scanLiveChain(async () => { await gate; return REPORT; }, "1002", { dir });
-  g.recordSelfReport("1002", "1000009", { has: false, at: null }, 1700000500, dir);
+  g.recordSelfReport("1002", "1000009", { has: false }, 1700000500, dir);
   release();
   await scan;
   const file = readStore(dir, "1002");
-  assert.deepEqual(file.self["1000009"], { has: false, at: null, checkedAt: 1700000500 });
+  assert.deepEqual(file.self["1000009"], { has: false, checkedAt: 1700000500 });
   assert.equal(Object.keys(file.hits).length, 2);
 });
 
@@ -174,8 +195,8 @@ test("a store file that will not parse loads as empty, and the next save replace
   const dir = tmp();
   writeFileSync(path.join(dir, "genocide-1003.json"), "{");
   assert.deepEqual(g.genocideMembers("1003", dir), {});
-  g.recordSelfReport("1003", "1000010", { has: true, at: null }, 1700000600, dir);
-  assert.deepEqual(readStore(dir, "1003").self["1000010"], { has: true, at: null, checkedAt: 1700000600 });
+  g.recordSelfReport("1003", "1000010", { has: true }, 1700000600, dir);
+  assert.deepEqual(readStore(dir, "1003").self["1000010"], { has: true, checkedAt: 1700000600 });
 });
 
 // ── The Torn call ──────────────────────────────────────────────────────

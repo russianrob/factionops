@@ -8410,7 +8410,7 @@ body.wb-chain-active {
                     <span class="wb-toggle-slider"></span>
                 </label>
             </div>
-            <div style="font-size:11px;opacity:0.7;margin:-4px 0 10px;">Once a day FactionOps reads your honors with your own key. Your faction sees only yes or no, on the faction info page.</div>
+            <div style="font-size:11px;opacity:0.7;margin:-4px 0 10px;">Once a day FactionOps reads your honors with your own key. Your faction sees only yes or no, on the faction info page. The switch is per device: turn it off on each one you use.</div>
 
             <div class="wb-settings-row">
                 <span>Post my calls to faction chat</span>
@@ -8706,18 +8706,20 @@ body.wb-chain-active {
         }
 
         // 5.6.29: the Genocide answer. On: a fresh check now. Off: the answer
-        // already on the server is withdrawn, and the mark goes with it.
+        // already on the server is owed a withdrawal, asked for now and at
+        // each sign-in until the server takes it, and the mark goes with it.
         const shareGenoEl = document.getElementById('wb-toggle-share-genocide');
         if (shareGenoEl) {
             shareGenoEl.addEventListener('change', (e) => {
                 setConfig('SHARE_GENOCIDE', e.target.checked ? '1' : '0');
                 if (e.target.checked) {
+                    GM_setValue('factionops_genocide_withdraw', '0');
                     GM_setValue('factionops_genocide_ok', '0');
                     GM_setValue('factionops_genocide_try', '0');
-                    try { selfCheckGenocide(Date.now()); } catch (_) {}
                 } else {
-                    postAction('/api/me/honors', { genocide: null }).catch(() => {});
+                    GM_setValue('factionops_genocide_withdraw', '1');
                 }
+                try { selfCheckGenocide(Date.now()); } catch (_) {}
             });
         }
 
@@ -9739,7 +9741,7 @@ body.wb-chain-active {
     function genocideFromHonors(data) {
         if (!data || typeof data !== 'object' || data.error || !Array.isArray(data.honors)) return null;
         const h = data.honors.find((x) => x && Number(x.id) === GENOCIDE_HONOR_ID);
-        return h ? { has: true, at: Number(h.timestamp) || null } : { has: false, at: null };
+        return { has: !!h };
     }
 
     /** Due a day after the last answer that reached the server, and never twice in an hour. */
@@ -9765,12 +9767,14 @@ body.wb-chain-active {
     function genocideBadge(entry) {
         if (!entry) return null;
         if (entry.has) {
+            // A faction hit is the faction's own chain record, date and all;
+            // a member's own answer is only yes or no, as the settings row says.
             const how = entry.via === 'hit'
                 ? 'made the ' + Number(entry.hit).toLocaleString('en-US') + 'th hit of a chain started ' + genocideDate(entry.start)
-                : (entry.at ? 'awarded ' + genocideDate(entry.at) : 'from their own honors');
+                : 'from their own honors';
             return { cls: 'fo-geno fo-geno-yes', text: 'G', title: 'Genocide: ' + how };
         }
-        return { cls: 'fo-geno fo-geno-no', text: 'G', title: 'No Genocide yet (checked ' + genocideDate(entry.checkedAt) + ' TCT)' };
+        return { cls: 'fo-geno fo-geno-no', text: 'G', title: 'No Genocide yet: from their own honors' };
     }
 
     /** Each member row on the page with its player id, once per row: [{ row, id }]. */
@@ -9787,10 +9791,16 @@ body.wb-chain-active {
         return out;
     }
 
-    // Where a mark goes: the end of the row's member cell, never inside the
-    // honor bar (FFS repaints .honor-text-wrap). The one place to move it.
+    // Where a mark goes: first in the row's position cell, as Faction Revive
+    // Check places its badge. The name cell is overflow:hidden and clips
+    // whatever follows the honor bar (measured on a device), so a mark there
+    // is in the page and invisible. A row without a position cell gets no
+    // mark rather than one that shoves the row about. The one place to move it.
     function placeGenocideBadge(row, el) {
-        (row.querySelector('.member') || row).appendChild(el);
+        const cell = row.querySelector('[class*="positionCol"], .table-cell.position');
+        if (!cell) return false;
+        cell.insertAdjacentElement('afterbegin', el);
+        return true;
     }
 
     /**
@@ -9809,7 +9819,7 @@ body.wb-chain-active {
             }
             if (!el) {
                 el = doc.createElement('span');
-                placeGenocideBadge(row, el);
+                if (!placeGenocideBadge(row, el)) return;
             }
             if (el.className !== want.cls) el.className = want.cls;
             if (el.textContent !== want.text) el.textContent = want.text;
@@ -9827,10 +9837,20 @@ body.wb-chain-active {
      * Once a day: this member's own honors, read with their own key, and
      * whether Genocide is among them posted to the server. Only with sharing
      * on, a key and a sign-in. A failure posts nothing, and the next try is
-     * an hour later at the soonest.
+     * an hour later at the soonest. With sharing off, a withdrawal the server
+     * has not taken yet is asked for again instead.
      */
     function selfCheckGenocide(now) {
-        if (CONFIG.SHARE_GENOCIDE !== '1' || !CONFIG.API_KEY || !state.jwtToken) return;
+        if (!state.jwtToken) return;
+        if (CONFIG.SHARE_GENOCIDE !== '1') {
+            if (String(GM_getValue('factionops_genocide_withdraw', '0')) === '1') {
+                postAction('/api/me/honors', { genocide: null })
+                    .then(() => GM_setValue('factionops_genocide_withdraw', '0'))
+                    .catch(() => {});
+            }
+            return;
+        }
+        if (!CONFIG.API_KEY) return;
         const lastOk = Number(GM_getValue('factionops_genocide_ok', '0')) || 0;
         const lastTry = Number(GM_getValue('factionops_genocide_try', '0')) || 0;
         if (!genocideCheckDue(now, lastOk, lastTry)) return;
@@ -9839,9 +9859,11 @@ body.wb-chain-active {
             method: 'GET',
             url: 'https://api.torn.com/v2/user/honors?key=' + encodeURIComponent(CONFIG.API_KEY) + '&comment=factionops-honors',
             onload(res) {
+                // Switched off while Torn was answering: nothing goes out.
+                if (CONFIG.SHARE_GENOCIDE !== '1') return;
                 const answer = genocideFromHonors(safeParse(res.responseText));
                 if (!answer) return;
-                postAction('/api/me/honors', { genocide: answer.has, awardedAt: answer.at })
+                postAction('/api/me/honors', { genocide: answer.has })
                     .then(() => GM_setValue('factionops_genocide_ok', String(Date.now())))
                     .catch(() => {});
             },
@@ -9859,7 +9881,7 @@ body.wb-chain-active {
         if (document.getElementById('fo-geno-style')) return;
         const st = document.createElement('style');
         st.id = 'fo-geno-style';
-        st.textContent = '.fo-geno{display:inline-block;margin-left:4px;padding:0 4px;border-radius:6px;'
+        st.textContent = '.fo-geno{display:inline-block;margin-right:3px;padding:0 4px;border-radius:6px;'
             + 'font:bold 9px/13px Arial,sans-serif;vertical-align:middle;cursor:help}'
             + '.fo-geno-yes{background:#8b1a1a;color:#fff}'
             + '.fo-geno-no{border:1px solid #4caf50;color:#4caf50;line-height:11px}';
@@ -12440,7 +12462,6 @@ body.wb-chain-active {
         moveTornChainBar();
         startEnergyPoll();
         startAttacksPoll();
-        startGenocideMarks();
 
         // Fetch Fair Fight data from ffscouter.com (initial + periodic refresh)
         fetchFairFightBatch();
@@ -14189,6 +14210,9 @@ body.wb-chain-active {
             // The full overlay is still reachable from the userscript menu,
             // because deleting the only door to a feature is not the same as
             // deleting a button.
+            // 5.6.29: the Genocide marks start here, the set-up every member
+            // runs, not in the overlay, which only the owner opens.
+            try { startGenocideMarks(); } catch (_) {}
             startCallsOnlyMode();
         } else {
             log('Page: Unknown — running in passive mode');

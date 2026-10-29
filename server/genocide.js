@@ -21,7 +21,7 @@
  * Store, data/genocide-<factionId>.json:
  *   hits     { <playerId>: { hit, respect, chainId, start } }  earliest qualifying hit
  *   scanned  { <chainId>: 1 }                                   finished chains already read
- *   self     { <playerId>: { has, at, checkedAt } }             each member's own answer
+ *   self     { <playerId>: { has, checkedAt } }                 each member's own answer; only has is served
  *
  * One object per faction lives in memory and every writer changes that same
  * object, so a scan waiting on Torn can never save over an answer that
@@ -79,17 +79,15 @@ export function foldHits(store, holders) {
 // ── A member's own answer ──────────────────────────────────────────────
 
 /**
- * FactionOps' answer, { genocide: true | false | null, awardedAt? }. A null
- * withdraws it (the member switched sharing off). The award time is kept
- * only with a yes. Anything else is refused.
+ * FactionOps' answer, { genocide: true | false | null }. A null withdraws it
+ * (the member switched sharing off). Anything else is refused, and any other
+ * field, a date included, is never kept: the member was promised yes or no.
  */
 export function parseSelfReport(body) {
   if (!body || typeof body !== "object") return null;
   const v = body.genocide;
-  if (v === null) return { has: null, at: null };
-  if (typeof v !== "boolean") return null;
-  const t = Number(body.awardedAt);
-  return { has: v, at: v && Number.isFinite(t) && t > 0 ? Math.floor(t) : null };
+  if (v === null) return { has: null };
+  return typeof v === "boolean" ? { has: v } : null;
 }
 
 /** Keep one member's answer, or forget it on a withdrawal. */
@@ -97,17 +95,19 @@ export function foldSelf(store, playerId, report, nowS) {
   store.self ||= {};
   const id = String(playerId);
   if (report.has === null) { delete store.self[id]; return; }
-  store.self[id] = { has: report.has, at: report.at, checkedAt: nowS };
+  store.self[id] = { has: report.has, checkedAt: nowS };
 }
 
 /**
  * What FactionOps shows, per member. A faction hit wins over a member's own
- * "no": it is Torn's record, and the "no" may be older than the hit.
+ * "no": it is Torn's record, and the "no" may be older than the hit. A
+ * member's own answer goes out as yes or no only; when they last checked
+ * stays here.
  */
 export function genocideView(store) {
   const out = {};
   for (const [id, s] of Object.entries(store.self || {})) {
-    out[id] = s.has ? { has: true, via: "self", at: s.at ?? null } : { has: false, checkedAt: s.checkedAt };
+    out[id] = s.has ? { has: true, via: "self" } : { has: false };
   }
   for (const [id, h] of Object.entries(store.hits || {})) {
     out[id] = { has: true, via: "hit", hit: h.hit, start: h.start };
@@ -188,8 +188,9 @@ export function genocideMembers(factionId, dir = DATA_DIR) {
 
 /**
  * Read each finished chain of 2,500+ hits once, at most `budget` a run. A
- * failed read stays unread and is asked again next time; a chain with no
- * report counts as read.
+ * failed read stays unread and is asked again next time, and so does a
+ * report without a 1,000+ bonus: every such chain has one (the 2,500th pays
+ * 1,280), so that is a changed answer from Torn, not a chain with no holder.
  */
 export async function scanFinishedChains(fetchReport, factionId, chains,
   { nowS = Math.floor(Date.now() / 1000), dir = DATA_DIR, budget = 60 } = {}) {
@@ -203,10 +204,13 @@ export async function scanFinishedChains(fetchReport, factionId, chains,
       console.warn(`[genocide] chain report ${id}: ${e.message}`);
       continue;
     }
-    if (report) {
-      fetched++;
-      found += foldHits(store, bonusHolders(report));
+    if (report) fetched++;
+    const holders = bonusHolders(report);
+    if (!holders.length) {
+      console.warn(`[genocide] chain report ${id}: no bonus of ${GENOCIDE_RESPECT}+ respect, read again next run`);
+      continue;
     }
+    found += foldHits(store, holders);
     store.scanned[id] = 1;
   }
   saveGenocide(factionId, dir);
