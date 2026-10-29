@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.28
+// @version      5.6.29
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.28';
+    const SCRIPT_VERSION = '5.6.29';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -131,6 +131,11 @@
         // written here round-trips as permanently-ON for every PDA user who
         // never opted in — precisely the accident this default exists to stop.
         CALL_CHAT: (String(GM_getValue('factionops_call_chat', '0')) === '1') ? '1' : '0',
+        // 5.6.29: once a day, read this member's own honors with their own key
+        // and tell the faction whether Genocide is among them (the marks on the
+        // faction info tab). Default ON, the owner's call; the same '1'/'0'
+        // strings as CALL_CHAT, so PDA's string storage reads a '0' as off.
+        SHARE_GENOCIDE: (String(GM_getValue('factionops_share_genocide', '1')) === '0') ? '0' : '1',
         // Replace the 1s poll with a hanging GET /api/poll-long (long-poll +
         // deltas) when no SSE/Socket.IO is up (i.e. phones). Default ON, with an
         // auto-fallback to the standard poll if the transport fails on a device.
@@ -166,6 +171,7 @@
             KEEP_ALIVE: 'factionops_keep_alive',
             SHARE_BSP: 'factionops_share_bsp',
             CALL_CHAT: 'factionops_call_chat',
+            SHARE_GENOCIDE: 'factionops_share_genocide',
             USE_LONGPOLL: 'factionops_use_longpoll',
         };
         if (gmKeys[key]) {
@@ -7131,6 +7137,7 @@ body.wb-chain-active {
                         // panel. startEnergyPoll is idempotent.
                         try { startEnergyPoll(); } catch (_) {}
                         try { startAttacksPoll(); } catch (_) {}
+                        try { selfCheckGenocide(Date.now()); } catch (_) {}
 
                         // Fetch faction's custom broadcast roles so
                         // isLeader() gates Shout + Cooldowns the same way
@@ -8397,6 +8404,15 @@ body.wb-chain-active {
             </div>
 
             <div class="wb-settings-row">
+                <span>Share whether I have Genocide with my faction</span>
+                <label class="wb-toggle">
+                    <input type="checkbox" id="wb-toggle-share-genocide" ${CONFIG.SHARE_GENOCIDE === '1' ? 'checked' : ''}>
+                    <span class="wb-toggle-slider"></span>
+                </label>
+            </div>
+            <div style="font-size:11px;opacity:0.7;margin:-4px 0 10px;">Once a day FactionOps reads your honors with your own key. Your faction sees only yes or no, on the faction info page.</div>
+
+            <div class="wb-settings-row">
                 <span>Post my calls to faction chat</span>
                 <label class="wb-toggle">
                     <input type="checkbox" id="wb-toggle-call-chat" ${CONFIG.CALL_CHAT === '1' ? 'checked' : ''}>
@@ -8685,6 +8701,22 @@ body.wb-chain-active {
                     showToast('Sharing your BSP cache with faction', 'info');
                 } else {
                     showToast('Stopped sharing BSP cache', 'info');
+                }
+            });
+        }
+
+        // 5.6.29: the Genocide answer. On: a fresh check now. Off: the answer
+        // already on the server is withdrawn, and the mark goes with it.
+        const shareGenoEl = document.getElementById('wb-toggle-share-genocide');
+        if (shareGenoEl) {
+            shareGenoEl.addEventListener('change', (e) => {
+                setConfig('SHARE_GENOCIDE', e.target.checked ? '1' : '0');
+                if (e.target.checked) {
+                    GM_setValue('factionops_genocide_ok', '0');
+                    GM_setValue('factionops_genocide_try', '0');
+                    try { selfCheckGenocide(Date.now()); } catch (_) {}
+                } else {
+                    postAction('/api/me/honors', { genocide: null }).catch(() => {});
                 }
             });
         }
@@ -9683,6 +9715,183 @@ body.wb-chain-active {
             clearInterval(energyPollInterval);
             energyPollInterval = null;
         }
+    }
+
+    // ---- Genocide marks (5.6.29) ----
+    // Torn's Genocide honor (478): "make a single hit that earns your faction
+    // 1,000 or more respect". On the faction info tab each member row gets a
+    // mark: a red G for holders, a green-outlined G for members confirmed not
+    // to hold it (so a big bonus hit can go to someone who still can earn it),
+    // and nothing when nobody knows. The server builds the list from the
+    // faction's chain reports (every bonus hit worth 1,000+) and from members'
+    // own answers: Torn shows a player's honors to their own key only, so once
+    // a day this script reads its member's honors with that key and posts yes
+    // or no. CONFIG.SHARE_GENOCIDE switches that off, and withdraws the answer.
+    const GENOCIDE_HONOR_ID = 478;
+    const GENOCIDE_CHECK_MS = 24 * 60 * 60 * 1000;   // one answer a day
+    const GENOCIDE_RETRY_MS = 60 * 60 * 1000;        // one try an hour while it fails
+    const GENOCIDE_LIST_MS = 10 * 60 * 1000;         // the faction's list, fetched again
+    // The member rows' profile links on the info tab, by the class names the
+    // offline highlighter and FFS read there. A row is the link's li.
+    const GENOCIDE_ROW_LINKS = '.members-list a[href*="XID="], .faction-info-members a[href*="XID="], .members-cont a[href*="XID="]';
+
+    /** {has, at} from /v2/user/honors, or null for anything but a list of honors. */
+    function genocideFromHonors(data) {
+        if (!data || typeof data !== 'object' || data.error || !Array.isArray(data.honors)) return null;
+        const h = data.honors.find((x) => x && Number(x.id) === GENOCIDE_HONOR_ID);
+        return h ? { has: true, at: Number(h.timestamp) || null } : { has: false, at: null };
+    }
+
+    /** Due a day after the last answer that reached the server, and never twice in an hour. */
+    function genocideCheckDue(now, lastOk, lastTry) {
+        return now - lastOk >= GENOCIDE_CHECK_MS && now - lastTry >= GENOCIDE_RETRY_MS;
+    }
+
+    /** Your own faction's info tab (its member list), and nothing else. */
+    function isFactionInfoTab(loc) {
+        if (!loc || loc.pathname !== '/factions.php') return false;
+        if (!/(?:^\?|&)step=your(?:&|$)/.test(String(loc.search || ''))) return false;
+        const hash = String(loc.hash || '');
+        return hash === '' || hash === '#' || hash === '#/' || /tab=info/i.test(hash);
+    }
+
+    // A Torn date (TCT is UTC), as 2026-10-28; '?' when there is none.
+    function genocideDate(sec) {
+        const d = new Date(Number(sec) * 1000);
+        return isNaN(d.getTime()) ? '?' : d.toISOString().slice(0, 10);
+    }
+
+    /** The mark for one member's entry in the list, or null when nothing is known. */
+    function genocideBadge(entry) {
+        if (!entry) return null;
+        if (entry.has) {
+            const how = entry.via === 'hit'
+                ? 'made the ' + Number(entry.hit).toLocaleString('en-US') + 'th hit of a chain started ' + genocideDate(entry.start)
+                : (entry.at ? 'awarded ' + genocideDate(entry.at) : 'from their own honors');
+            return { cls: 'fo-geno fo-geno-yes', text: 'G', title: 'Genocide: ' + how };
+        }
+        return { cls: 'fo-geno fo-geno-no', text: 'G', title: 'No Genocide yet (checked ' + genocideDate(entry.checkedAt) + ' TCT)' };
+    }
+
+    /** Each member row on the page with its player id, once per row: [{ row, id }]. */
+    function findGenocideRows(doc) {
+        const out = [];
+        const seen = new Set();
+        doc.querySelectorAll(GENOCIDE_ROW_LINKS).forEach((a) => {
+            const m = String(a.getAttribute('href') || '').match(/XID=(\d+)/i);
+            const row = a.closest('li') || a.closest('.table-row');
+            if (!m || !row || seen.has(row)) return;
+            seen.add(row);
+            out.push({ row, id: m[1] });
+        });
+        return out;
+    }
+
+    // Where a mark goes: the end of the row's member cell, never inside the
+    // honor bar (FFS repaints .honor-text-wrap). The one place to move it.
+    function placeGenocideBadge(row, el) {
+        (row.querySelector('.member') || row).appendChild(el);
+    }
+
+    /**
+     * Bring every row's mark in step with the list. It writes only what
+     * changed, so a page observer watching these rows is not woken for
+     * nothing. Returns the rows marked.
+     */
+    function markGenocideRows(doc, members) {
+        let marked = 0;
+        findGenocideRows(doc).forEach(({ row, id }) => {
+            const want = genocideBadge(members && members[id]);
+            let el = row.querySelector('.fo-geno');
+            if (!want) {
+                if (el) el.remove();
+                return;
+            }
+            if (!el) {
+                el = doc.createElement('span');
+                placeGenocideBadge(row, el);
+            }
+            if (el.className !== want.cls) el.className = want.cls;
+            if (el.textContent !== want.text) el.textContent = want.text;
+            if (el.getAttribute('title') !== want.title) el.setAttribute('title', want.title);
+            marked++;
+        });
+        return marked;
+    }
+
+    function clearGenocideBadges(doc) {
+        doc.querySelectorAll('.fo-geno').forEach((el) => el.remove());
+    }
+
+    /**
+     * Once a day: this member's own honors, read with their own key, and
+     * whether Genocide is among them posted to the server. Only with sharing
+     * on, a key and a sign-in. A failure posts nothing, and the next try is
+     * an hour later at the soonest.
+     */
+    function selfCheckGenocide(now) {
+        if (CONFIG.SHARE_GENOCIDE !== '1' || !CONFIG.API_KEY || !state.jwtToken) return;
+        const lastOk = Number(GM_getValue('factionops_genocide_ok', '0')) || 0;
+        const lastTry = Number(GM_getValue('factionops_genocide_try', '0')) || 0;
+        if (!genocideCheckDue(now, lastOk, lastTry)) return;
+        GM_setValue('factionops_genocide_try', String(now));
+        httpRequest({
+            method: 'GET',
+            url: 'https://api.torn.com/v2/user/honors?key=' + encodeURIComponent(CONFIG.API_KEY) + '&comment=factionops-honors',
+            onload(res) {
+                const answer = genocideFromHonors(safeParse(res.responseText));
+                if (!answer) return;
+                postAction('/api/me/honors', { genocide: answer.has, awardedAt: answer.at })
+                    .then(() => GM_setValue('factionops_genocide_ok', String(Date.now())))
+                    .catch(() => {});
+            },
+            onerror() { /* the hourly retry covers it */ },
+        });
+    }
+
+    let _genocideTimer = null;
+    let _genocideMembers = null;
+    let _genocideFetchedAt = 0;
+    let _genocideLoading = false;
+
+    // The marks' look, added once.
+    function addGenocideStyle() {
+        if (document.getElementById('fo-geno-style')) return;
+        const st = document.createElement('style');
+        st.id = 'fo-geno-style';
+        st.textContent = '.fo-geno{display:inline-block;margin-left:4px;padding:0 4px;border-radius:6px;'
+            + 'font:bold 9px/13px Arial,sans-serif;vertical-align:middle;cursor:help}'
+            + '.fo-geno-yes{background:#8b1a1a;color:#fff}'
+            + '.fo-geno-no{border:1px solid #4caf50;color:#4caf50;line-height:11px}';
+        (document.head || document.documentElement).appendChild(st);
+    }
+
+    /** Every 2 s on factions.php: the marks on the info tab, and none off it. */
+    function genocideTick() {
+        if (!isFactionInfoTab(window.location)) {
+            if (document.querySelector('.fo-geno')) clearGenocideBadges(document);
+            return;
+        }
+        if (!state.jwtToken) return;
+        const now = Date.now();
+        if (!_genocideLoading && now - _genocideFetchedAt >= GENOCIDE_LIST_MS) {
+            _genocideLoading = true;
+            _genocideFetchedAt = now;
+            getAction('/api/genocide')
+                .then((d) => { _genocideMembers = (d && d.members) || {}; })
+                .catch(() => {})
+                .then(() => { _genocideLoading = false; });
+        }
+        if (_genocideMembers) markGenocideRows(document, _genocideMembers);
+    }
+
+    // Only factions.php can show the info tab, and a tab change there is a
+    // hash change, not a new page, so the tick runs for as long as the page.
+    function startGenocideMarks() {
+        if (_genocideTimer || window.location.pathname !== '/factions.php') return;
+        addGenocideStyle();
+        _genocideTimer = setInterval(() => { try { genocideTick(); } catch (_) {} }, 2000);
+        try { genocideTick(); } catch (_) {}
     }
 
     // ---- Attack telemetry via personal API ----
@@ -12231,6 +12440,7 @@ body.wb-chain-active {
         moveTornChainBar();
         startEnergyPoll();
         startAttacksPoll();
+        startGenocideMarks();
 
         // Fetch Fair Fight data from ffscouter.com (initial + periodic refresh)
         fetchFairFightBatch();
