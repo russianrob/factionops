@@ -16044,9 +16044,15 @@ body.wb-chain-active {
         document.body.appendChild(el);
 
         // Torn's own header sits at the top; nudge the page down so the banner
-        // covers nothing the reader needs while it is up.
+        // covers nothing the reader needs while it is up. Not on the attack
+        // page: the bonus banner comes up and goes mid-fight there, and a page
+        // that jumps moves the buttons under a finger. On a phone a tap meant
+        // for a weapon then lands on a player header, which flips Torn's view
+        // to the rival's loadout. There the banner covers the top instead.
         const prevPad = document.body.style.paddingTop;
-        document.body.style.paddingTop = (el.offsetHeight || 60) + 'px';
+        if (new URLSearchParams(window.location.search).get('sid') !== 'attack') {
+            document.body.style.paddingTop = (el.offsetHeight || 60) + 'px';
+        }
 
         const until = Date.now() + BANNER_TTL_MS;
         activeBanner = {
