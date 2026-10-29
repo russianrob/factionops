@@ -214,8 +214,7 @@ test("fetchChainReport asks for one chain by id, or for the latest chain without
   } finally {
     globalThis.fetch = realFetch;
   }
-  // The chain's id goes in the path. Torn reads ?id= on /faction/chainreport
-  // as a faction's id and answers "Incorrect ID" (code 6) for every chain.
+  // The chain's id goes in the path, as chain-hits.js asks.
   assert.match(urls[0], /^https:\/\/api\.torn\.com\/v2\/faction\/900001\/chainreport\?key=TESTKEY&/);
   assert.match(urls[1], /^https:\/\/api\.torn\.com\/v2\/faction\/chainreport\?key=TESTKEY&/);
 });
