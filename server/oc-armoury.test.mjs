@@ -176,6 +176,90 @@ test('a holder id given as a number still leaves that member out', () => {
   assert.deepEqual(offered()(NAMES, [{ armoryID: 13, holder: { id: 1000002, name: 'Bravo' } }]), [['1000001', 'Alpha'], ['1000003', 'Charlie']]);
 });
 
+// The Armour view: every armour piece, the body part each covers, and who
+// "Loan to" offers there. Lifted on their own, so a missing helper fails only
+// these checks.
+const anames = ['mgr_rwBonusLabel', 'mgr_armourPart', 'mgr_armourPieces', 'mgr_armouryMatches', 'mgr_armouryPostTypes'];
+const A = () => new Function(anames.map(fn).join('\n') + '\nreturn { ' + anames.join(', ') + ' };')();
+const lift = (name) => new Function(fn(name) + '\nreturn ' + name + ';')();
+// Armour rows as the armoury page gives them: every piece, ranked-war or not.
+const piece = (armoryID, name, user = false, extra = {}) => ({ armoryID, itemID: String(9000 + armoryID), name, type: 'Defensive', glowClass: '', bonuses: [], user, ...extra });
+const ARMOUR = [
+  piece(31, 'Combat Boots', { userID: 1000002, playername: 'Bravo' }),
+  piece(32, 'Combat Helmet', { id: '1000001', playername: 'Alpha' }),
+  piece(33, 'Combat Helmet'),
+  piece(34, 'Hazmat Suit'),
+  piece(35, 'Flexible Body Armor', false, { glowClass: 'glow-yellow', bonuses: [bonus('Impregnable', '12% reduced melee damage'), blank] }),
+  piece(36, 'Combat Pants', ''),
+  piece(37, 'AK-47', false, { type: 'Primary' }),
+  piece(38, 'Bulletproof Vest', { userID: 1000003, playername: 'Charlie' }),
+  piece(39, 'Combat Gloves'),
+];
+
+test('an armour piece covers the body part its name says', () => {
+  const p = A().mgr_armourPart;
+  for (const [name, part] of [['Combat Helmet', 'head'], ['Construction Helmet', 'head'], ['Gas Mask', 'head'],
+    ['Bulletproof Vest', 'body'], ['Combat Vest', 'body'], ['Flexible Body Armor', 'body'], ['Liquid Body Armor', 'body'], ['Riot Body', 'body'],
+    ['Combat Pants', 'legs'], ['Combat Gloves', 'hands'], ['Leather Gloves', 'hands'], ['Combat Boots', 'feet'],
+    ['Hazmat Suit', ''], ['', '']]) assert.equal(p(name), part, name);
+});
+
+test('every armour piece is listed, head to feet, free ones first; a row that is not armour is not', () => {
+  const rows = A().mgr_armourPieces(ARMOUR);
+  assert.deepEqual(rows.map((r) => r.armoryID), [33, 32, 38, 35, 36, 39, 31, 34]);
+  assert.deepEqual(rows[3], { armoryID: 35, itemID: 9035, name: 'Flexible Body Armor', type: 'Defensive', part: 'body',
+    rarity: 'yellow', bonuses: ['Impregnable 12%'], holder: null });
+  assert.deepEqual(rows[1].holder, { id: '1000001', name: 'Alpha' });
+  assert.equal(rows[4].holder, null);           // user '' is free
+  assert.equal(rows[7].part, '');               // Hazmat Suit: kept by its type, part unknown
+  assert.deepEqual(A().mgr_armourPieces([piece(40, 'Riot Gloves', false, { type: '' }), { name: 'No id', type: 'Defensive' }]).map((r) => r.armoryID), [40]);
+});
+
+test("Armour's Loan to offers everyone short of a full set, by name", () => {
+  const offeredA = lift('mgr_armourCandidates');
+  const held = (id, ...parts) => parts.map((part) => ({ part, holder: { id, name: '' } }));
+  const pieces = [...held('1000002', 'head', 'body', 'legs', 'hands', 'feet'),
+    ...held('1000001', 'head', 'head', 'body', 'legs', 'hands'),   // two helmets are one part
+    ...held('1000003', 'head', '', '', '', ''),                     // unknown parts never count
+    { part: 'feet', holder: null }];
+  assert.deepEqual(offeredA(NAMES, pieces), [['1000001', 'Alpha'], ['1000003', 'Charlie']]);
+  assert.deepEqual(offeredA(NAMES, held(1000002, 'head', 'body', 'legs', 'hands', 'feet')), [['1000001', 'Alpha'], ['1000003', 'Charlie']]);
+  assert.deepEqual(offeredA(NAMES, []), [['1000001', 'Alpha'], ['1000002', 'Bravo'], ['1000003', 'Charlie']]);
+});
+
+test('the piece a member already holds for a body part is found; an unknown part is never in the way', () => {
+  const heldFor = lift('mgr_armourPartHeld');
+  const pieces = [
+    { armoryID: 32, name: 'Combat Helmet', part: 'head', holder: { id: '1000001', name: 'Alpha' } },
+    { armoryID: 41, name: 'Combat Helmet', part: 'head', holder: { id: '1000001', name: 'Alpha' } },
+    { armoryID: 34, name: 'Hazmat Suit', part: '', holder: { id: '1000001', name: 'Alpha' } },
+    { armoryID: 33, name: 'Combat Helmet', part: 'head', holder: null },
+  ];
+  assert.equal(heldFor(pieces, '1000001', 'head').armoryID, 32);
+  assert.equal(heldFor(pieces, 1000001, 'head').armoryID, 32);
+  assert.equal(heldFor(pieces, '1000001', 'feet'), null);
+  assert.equal(heldFor(pieces, '1000001', ''), null);
+  assert.equal(heldFor(pieces, '1000002', 'head'), null);
+});
+
+test('the search finds armour by piece, body part, bonus or who has it; a weapon has no part to match', () => {
+  const lib = A();
+  const rows = lib.mgr_armourPieces(ARMOUR);
+  const hit = (q) => rows.filter((r) => lib.mgr_armouryMatches(r, q)).map((r) => r.armoryID);
+  assert.deepEqual(hit('helmet'), [33, 32]);
+  assert.deepEqual(hit('HEAD'), [33, 32]);
+  assert.deepEqual(hit('feet'), [31]);
+  assert.deepEqual(hit('charlie'), [38]);
+  assert.deepEqual(hit('impregnable'), [35]);
+  assert.deepEqual(L().mgr_rwCopies(PAGE).filter((r) => lib.mgr_armouryMatches(r, 'undefined')), []);
+});
+
+test('an armour loan or retrieve names Defensive first, then the older Armor', () => {
+  const { mgr_armouryPostTypes: t } = A();
+  assert.deepEqual(t('armor', 'Defensive'), ['Defensive', 'Armor']);
+  assert.deepEqual(t('armor', ''), ['Defensive', 'Armor']);
+});
+
 test('3.2.90 in both places, and the meta file is the header', () => {
   const end = '// ==/UserScript==';
   assert.equal(META, SRC.slice(0, SRC.indexOf(end) + end.length) + '\n');

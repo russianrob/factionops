@@ -2268,11 +2268,74 @@
         return out.sort((a, b) => rank[a.rarity] - rank[b.rarity] || a.name.localeCompare(b.name) || a.armoryID - b.armoryID);
     }
 
-    // The search: a copy's name, type, rarity, bonus, or holder, any case.
+    // The body part an armour piece covers, read from its name: 'head',
+    // 'body', 'legs', 'hands' or 'feet', and '' when the name doesn't say.
+    function mgr_armourPart(name) {
+        const s = String(name || '');
+        if (/helmet|mask|respirator/i.test(s)) return 'head';
+        if (/vest|body|apron|mail/i.test(s)) return 'body';
+        if (/pants/i.test(s)) return 'legs';
+        if (/gloves/i.test(s)) return 'hands';
+        if (/boots/i.test(s)) return 'feet';
+        return '';
+    }
+
+    // The pieces the Armour view lists, from the armoury page's armour rows
+    // (one row per piece): every piece, ranked-war or not. A row counts as
+    // armour when Torn types it Defensive (or Armor/Armour) or its name says
+    // a body part, so another tab's rows are never shown as armour. Head to
+    // feet, pieces of no known part last; then by name, free pieces before
+    // held ones. The holder is read as in mgr_rwCopies.
+    function mgr_armourPieces(rows) {
+        const order = ['head', 'body', 'legs', 'hands', 'feet', ''];
+        const out = [];
+        for (const e of rows || []) {
+            if (!e || !e.armoryID) continue;
+            const name = String(e.name || ''), type = String(e.type || ''), part = mgr_armourPart(name);
+            if (!part && !/^(defensive|armou?r)$/i.test(type)) continue;
+            const m = /glow-(red|orange|yellow)/.exec(String(e.glowClass || ''));
+            const id = e.user ? (e.user.userID ?? e.user.id) : null;
+            out.push({
+                armoryID: e.armoryID, itemID: Number(e.itemID), name, type, part,
+                rarity: m ? m[1] : '',
+                bonuses: (Array.isArray(e.bonuses) ? e.bonuses : []).map(b => mgr_rwBonusLabel(b && b.title)).filter(Boolean),
+                holder: id != null && id !== '' ? { id: String(id), name: String(e.user.playername || `[${id}]`) } : null,
+            });
+        }
+        return out.sort((a, b) => order.indexOf(a.part) - order.indexOf(b.part) || a.name.localeCompare(b.name)
+            || (a.holder ? 1 : 0) - (b.holder ? 1 : 0) || a.armoryID - b.armoryID);
+    }
+
+    // Who "Loan to" offers in the Armour view: [id, name] for each member
+    // short of a full set (a piece for each of head, body, legs, hands and
+    // feet), by name. Two pieces for one part are one part; a piece of no
+    // known part never counts.
+    function mgr_armourCandidates(nameMap, pieces) {
+        const parts = new Map();
+        for (const p of pieces || []) {
+            if (!p || !p.holder || !p.part) continue;
+            const id = String(p.holder.id);
+            if (!parts.has(id)) parts.set(id, new Set());
+            parts.get(id).add(p.part);
+        }
+        return [...(nameMap || new Map()).entries()]
+            .filter(([id]) => !parts.has(String(id)) || parts.get(String(id)).size < 5)
+            .sort((a, b) => a[1].localeCompare(b[1]));
+    }
+
+    // The piece a member already holds for that body part, or null. A piece
+    // of no known part is never in the way of another.
+    function mgr_armourPartHeld(pieces, memberId, part) {
+        if (!part) return null;
+        return (pieces || []).find(p => p && p.part === part && p.holder && String(p.holder.id) === String(memberId)) || null;
+    }
+
+    // The search: a copy's name, type, body part, rarity, bonus, or holder,
+    // any case.
     function mgr_armouryMatches(row, query) {
         const q = String(query || '').trim().toLowerCase();
         if (!q) return true;
-        return [row.name, row.type, row.rarity, ...row.bonuses, row.holder ? row.holder.name : '']
+        return [row.name, row.type, row.part || '', row.rarity, ...row.bonuses, row.holder ? row.holder.name : '']
             .some(t => String(t).toLowerCase().includes(q));
     }
 
