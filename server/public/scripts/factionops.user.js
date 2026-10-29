@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.33
+// @version      5.6.34
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.33';
+    const SCRIPT_VERSION = '5.6.34';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1902,17 +1902,24 @@ body.wb-chain-active {
    it starts from nothing and takes only the room Torn's name and HP leave
    over (flex 1 1 0px; hidden overflow lets a flex row give it nothing), so
    they are never squeezed for it: squeezed even a fraction of a pixel, their
-   text wraps onto a second line. When the room is short it is cut off with an
-   ellipsis. The gap after the name is a text indent, not a margin, for the
-   same reason. It never wraps, and line-height 1 keeps the bolt's tall emoji
-   glyph from making the row taller. Its colour is the name's, set when it is
-   painted. */
+   text wraps onto a second line. The gap after the name is a text indent, not
+   a margin, for the same reason. It never wraps, and line-height 1 keeps the
+   bolt's tall emoji glyph from making the row taller. With too little room
+   for all of it, it is not shown: a cut number could misread. Its colour is
+   the name's, set when it is painted. */
 #fo-atk-energy {
     display: inline-block; flex: 1 1 0px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    overflow: hidden; white-space: nowrap;
     text-indent: 6px;
     font-size: 0.85em; font-weight: 400; line-height: 1;
     font-variant-numeric: tabular-nums;
+}
+/* Torn's own row lets your name grow to fill it, so the number would get half
+   the room left over and sit mid-header. While the number follows your name
+   (anywhere after it), the name keeps to its words. A rule of its own: a
+   browser without :has() drops just this one. */
+[class*="headerWrapper__"][class*="green__"] .user-name:has(~ #fo-atk-energy) {
+    flex-grow: 0 !important;
 }
 
 /* Live chain count + timer display */
@@ -14331,13 +14338,22 @@ body.wb-chain-active {
     }
 
     // The shape of your header's name row: the header's height, the row's,
-    // and the box of everything in the row but the number. None of it may
-    // change when the number goes in.
-    function attackEnergyRowShape(row, label) {
+    // and the box of everything in the row but the number; for your name, its
+    // words and whether they overflow it, not its box (on Torn's own row the
+    // name's box narrows when the number comes in, and nothing on screen
+    // moves). None of it may change when the number goes in.
+    function attackEnergyRowShape(row, label, name) {
         const header = row.closest('[class*="headerWrapper__"]') || row;
         const shape = [header.getBoundingClientRect().height, row.getBoundingClientRect().height];
         for (const el of row.children) {
             if (el === label) continue;
+            if (el === name) {
+                const words = document.createRange();
+                words.selectNodeContents(name);
+                const w = words.getBoundingClientRect();
+                shape.push(w.left, w.top, w.width, w.height, name.scrollWidth - name.clientWidth > 1 ? 1 : 0);
+                continue;
+            }
             const b = el.getBoundingClientRect();
             shape.push(b.left, b.top, b.width, b.height);
         }
@@ -14351,26 +14367,27 @@ body.wb-chain-active {
     }
 
     // A row with no room: in the console every time, and to the client log
-    // once per version per install, with the kind of row it was, so the owner
+    // once per version per install, with the kind of row it was and why (the
+    // number would have moved something, or been cut short), so the owner
     // learns Torn's real layout from the first member who meets one.
-    function reportAttackEnergyNoRoom(row, name) {
+    function reportAttackEnergyNoRoom(row, name, why) {
         const rcs = getComputedStyle(row), ncs = getComputedStyle(name);
         const data = {
-            v: SCRIPT_VERSION, pda: IS_PDA, display: rcs.display, direction: rcs.flexDirection,
+            v: SCRIPT_VERSION, pda: IS_PDA, why, display: rcs.display, direction: rcs.flexDirection,
             gap: rcs.columnGap, columns: rcs.gridTemplateColumns, justify: rcs.justifyContent,
             // Longhands: WebKit may give a shorthand such as flex as ''.
             nameFloat: ncs.cssFloat, nameGrow: ncs.flexGrow, nameShrink: ncs.flexShrink, nameBasis: ncs.flexBasis,
         };
-        log('attack energy: no room in your header, row ' + data.display);
+        log('attack energy: no room in your header (' + why + '), row ' + data.display);
         try {
             if (GM_getValue(ATK_ENERGY_REPORTED_KEY, '') === SCRIPT_VERSION) return;
             httpRequest({
                 method: 'POST', url: CONFIG.SERVER_URL + '/api/debug/client-log',
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify({ tag: 'fo-atk-energy', data }),
-                // Marked sent only once the server has it: a report turned
-                // away goes again from the next page that needs one.
-                onload(res) { if (res && res.status === 200) GM_setValue(ATK_ENERGY_REPORTED_KEY, SCRIPT_VERSION); },
+                // Marked sent only once the server has it (it answers 204): a
+                // report turned away goes again from the next page that needs one.
+                onload(res) { if (res && res.status >= 200 && res.status < 300) GM_setValue(ATK_ENERGY_REPORTED_KEY, SCRIPT_VERSION); },
                 onerror() {},
             });
         } catch (_) { /* a report must never break the page */ }
@@ -14395,7 +14412,7 @@ body.wb-chain-active {
         // without it first, so what it is held to is the row as Torn drew it.
         const next = placed ? label.nextSibling : want.name.nextSibling;
         label.remove();
-        const before = attackEnergyRowShape(row, label);
+        const before = attackEnergyRowShape(row, label, want.name);
         if (label.textContent !== want.text) label.textContent = want.text;
         if (label.style.color !== want.colour) label.style.color = want.colour;
         if (label.style.marginLeft !== want.margin) label.style.marginLeft = want.margin;
@@ -14403,11 +14420,13 @@ body.wb-chain-active {
         // Measured again before the browser draws the page, so a member never
         // sees it: had the number moved or resized anything in the row, or
         // made your header taller (a row laid out as a grid, or around a
-        // floated name), it comes out at once and that row keeps none.
-        if (attackEnergyMoved(before, attackEnergyRowShape(row, label))) {
+        // floated name), it comes out at once and that row keeps none. So
+        // does a number cut short for room: "⚡8…" could be read as 8.
+        const moved = attackEnergyMoved(before, attackEnergyRowShape(row, label, want.name));
+        if (moved || label.scrollWidth > label.clientWidth) {
             label.remove();
             atkEnergyNoRoom = row;
-            reportAttackEnergyNoRoom(row, want.name);
+            reportAttackEnergyNoRoom(row, want.name, moved ? 'moved' : 'cut');
         }
     }
 

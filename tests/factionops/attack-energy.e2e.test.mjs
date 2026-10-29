@@ -2,8 +2,9 @@
 // your name in your own header (Torn's green one), in the name's colour. It
 // shows what FactionOps read from Torn's API when the page opened, then the
 // energy Torn's sidebar saved in sessionStorage once that changes on the page.
-// Nothing on the page moves when it appears, a full header squeezes it before
-// anything of Torn's, no reading is no number, a profile page or an attack log
+// Nothing on the page moves when it appears, Torn's own row (your name grows
+// to fill it) still has it 6 px from your name, a header with no room for all
+// of it gets none, no reading is no number, a profile page or an attack log
 // gets none, and a page with nothing new to show is left alone. Numbers,
 // names, class hashes and the key are made up.
 import fs from "fs";
@@ -15,7 +16,8 @@ const b = await chromium.launch({ args: ["--no-sandbox"] });
 
 // What a userscript manager would give the script, with GM storage and the
 // server stubbed: every request is logged, the sign-in answers as a member of
-// faction 1000003, the client log takes what it is sent, and Torn's bars
+// faction 1000003, the client log takes what it is sent and answers 204 with
+// no body, as the server does, and Torn's bars
 // answer cfg.bars (875/150 unless a test says otherwise), cfg.barsDelay ms
 // after they are asked for (50 unless a test says otherwise). With cfg.sidebar ({ amount, max }) the tab starts with
 // that energy in Torn's saved sidebar data; with cfg.blockStorage the page's
@@ -27,8 +29,9 @@ const preamble = (cfg) => `(() => {
   const answers = {
     "/api/auth": { token: "jwt-test", player: { playerId: 1000002, playerName: "Tester", factionId: 1000003 } },
     "selections=bars&key=K": cfg.bars || { energy: { current: 875, maximum: 150, ticktime: 100, fulltime: 600 } },
-    "/api/debug/client-log": { ok: true },
+    "/api/debug/client-log": "",
   };
+  const statuses = { "/api/debug/client-log": 204 };
   if (cfg.sidebar) sessionStorage.setItem("sidebarData1000002", JSON.stringify({ bars: { energy: cfg.sidebar } }));
   if (cfg.blockStorage) Object.defineProperty(window, "sessionStorage", { configurable: true, get() { throw new DOMException("The operation is insecure.", "SecurityError"); } });
   window.__passes = 0;
@@ -50,7 +53,8 @@ const preamble = (cfg) => `(() => {
     const path = Object.keys(answers).find((p) => url.endsWith(p));
     if (!path) return;
     const wait = path.startsWith("selections=bars") && cfg.barsDelay ? cfg.barsDelay : 50;
-    setTimeout(() => o.onload({ status: 200, responseText: JSON.stringify(answers[path]) }), wait);
+    const status = statuses[path] || 200;
+    setTimeout(() => o.onload({ status, responseText: status === 204 ? "" : JSON.stringify(answers[path]) }), wait);
   };
 })();`;
 
@@ -62,6 +66,10 @@ const preamble = (cfg) => `(() => {
 // name is light and the row dark, so a number in the row's colour would show
 // it.
 const ROW_CSS = "display:flex;align-items:center;justify-content:space-between";
+// Torn's own name row, as members' phones report it: a flex row whose name
+// grows to fill it, so the name's box runs on to the entries.
+const REAL_ROW = "display:flex;justify-content:flex-start";
+const GROWS = ";flex:1 1 auto";
 const row = (name, cfg = {}) => `<div class="topWrap___x" style="${cfg.rowCss || ROW_CSS};font-size:16px;color:rgb(20, 20, 20)">`
   + `<span class="userName___x user-name left" id="r-name-${name}" style="color:rgb(250, 250, 250);font-weight:700${cfg.nameCss || ""}">${name}</span>`
   + '<div class="textEntries___x" style="display:flex;gap:8px;justify-content:flex-end"><div class="entry___x"><span>0</span></div><div class="entry___x"><span>7,100 / 7,100</span></div></div></div>';
@@ -99,23 +107,25 @@ const paintErrors = (logs) => logs.filter((l) => l.includes("attack energy paint
 
 // The number as the page shows it, or null: its words; whether it is in your
 // name's row after the name, or in their header; how many there are; the gap
-// in px from your name to its words; whether it sits in the name's line; and
-// its look next to the row: its size, weight, and whether it has the name's
-// colour.
+// in px from your name's words to its own (words, not boxes: on Torn's own
+// row the name's box runs on past its words); whether it sits in the name's
+// line; and its look next to the row: its size, weight, and whether it has
+// the name's colour.
 const label = (p) => p.evaluate(() => {
   const e = document.getElementById("fo-atk-energy");
   if (!e) return null;
   const name = document.querySelector('[class*="headerWrapper__"][class*="green__"] .user-name');
   const n = name.getBoundingClientRect(), r = e.getBoundingClientRect();
-  const words = document.createRange();
+  const words = document.createRange(), nameWords = document.createRange();
   words.selectNodeContents(e);
+  nameWords.selectNodeContents(name);
   const cs = getComputedStyle(e), rowCs = getComputedStyle(name.parentElement);
   return {
     text: e.textContent,
     afterName: e.parentElement === name.parentElement && !!(name.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING),
     inTheirs: !!e.closest('[class*="rose__"]'),
     count: document.querySelectorAll("#fo-atk-energy").length,
-    gap: Math.round(words.getBoundingClientRect().left - n.right),
+    gap: Math.round(words.getBoundingClientRect().left - nameWords.getBoundingClientRect().right),
     inLine: Math.abs((r.top + r.bottom) / 2 - (n.top + n.bottom) / 2) <= 2,
     size: Math.round(parseFloat(cs.fontSize) / parseFloat(rowCs.fontSize) * 100) / 100,
     weight: cs.fontWeight,
@@ -138,13 +148,16 @@ const backAfterName = (p) => p.waitForFunction(() => {
   return !!e && !!name && e.parentElement === name.parentElement && !!(name.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING);
 }, null, { timeout: 4000 }).then(() => true, () => false);
 // Where things sit now, to a hundredth of a pixel: their header, your first
-// weapon, and your name and your entries in your row.
+// weapon, your name's words (what members see: its box may change with
+// nothing on screen moving) and your entries in your row.
 const layout = (p) => p.evaluate(() => {
-  const at = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map((n) => Math.round(n * 100) / 100).join(","); };
+  const box = (r) => [r.left, r.top, r.width, r.height].map((n) => Math.round(n * 100) / 100).join(",");
+  const at = (sel) => box(document.querySelector(sel).getBoundingClientRect());
+  const words = (sel) => { const g = document.createRange(); g.selectNodeContents(document.querySelector(sel)); return box(g.getBoundingClientRect()); };
   return {
     theirs: at('[class*="headerWrapper__"][class*="rose__"]'),
     weapon: at("#weapon_main"),
-    name: at('[class*="headerWrapper__"][class*="green__"] .user-name'),
+    name: words('[class*="headerWrapper__"][class*="green__"] .user-name'),
     entries: at('[class*="headerWrapper__"][class*="green__"] [class*="textEntries__"]'),
   };
 });
@@ -208,6 +221,31 @@ await t("the number coming in moves nothing", async () => {
   assert.deepStrictEqual(after, before);
 });
 
+await t("Torn's own row, where your name grows to fill it, has the number 6 px from your name", async () => {
+  const { ctx, p } = await open(ATTACK, { rowCss: REAL_ROW, nameCss: GROWS });
+  // Without :has() no browser could hold the name back: that would fail this
+  // test for a reason that is not the script's.
+  const has = await p.evaluate(() => CSS.supports("selector(:has(~ a))"));
+  const shown = await until(p, BOLT + "875");
+  const got = await label(p);
+  await ctx.close();
+  assert.ok(has, "this browser has no :has()");
+  assert.ok(shown, JSON.stringify(got));
+  assert.deepStrictEqual(got, SHOWN);
+});
+
+await t("the number coming into Torn's own row moves nothing", async () => {
+  const { ctx, p } = await open(ATTACK, { barsDelay: 4000, rowCss: REAL_ROW, nameCss: GROWS });
+  const before = await layout(p);
+  const none = await p.evaluate(() => !document.getElementById("fo-atk-energy"));
+  const shown = await appears(p);
+  const after = await layout(p);
+  await ctx.close();
+  assert.ok(none, "the number was up before the reading came in");
+  assert.ok(shown, "no number");
+  assert.deepStrictEqual(after, before);
+});
+
 // Your row made just `spare` px wider than your name, your entries and the
 // row's own gap need, as a long name on a phone leaves it.
 const squeeze = (p, spare) => p.evaluate(({ sel, spare }) => {
@@ -220,21 +258,24 @@ const reported = (p) => p.waitForFunction(() => window.__reqs.some((r) => r.url.
 const reports = (p) => p.evaluate(() => window.__reqs.filter((r) => r.url.endsWith("/api/debug/client-log") && String(r.data).includes('"fo-atk-energy"')).map((r) => JSON.parse(r.data).data));
 const noRoomLogs = (logs) => logs.filter((l) => l.includes("attack energy: no room"));
 
-// 4 px of room, less than the gap after the name: the number appears, cut
-// short, and nothing else gives way.
-await t("a crowded header squeezes the number, not your HP", async () => {
+// 4 px of room, less than the gap after the name: a cut number could misread
+// ("⚡8…" for 875), so there is none, nothing else gives way, and the report
+// says it was cut.
+await t("a crowded header shows no number rather than a cut one, and nothing moves", async () => {
   const { ctx, p } = await open(ATTACK, { barsDelay: 4000 });
   await squeeze(p, 4);
   const before = await layout(p);
   const none = await p.evaluate(() => !document.getElementById("fo-atk-energy"));
-  const shown = await appears(p);
+  const sent = await reported(p);
   const after = await layout(p);
-  const cut = await p.evaluate(() => { const e = document.getElementById("fo-atk-energy"); return !!e && e.scrollWidth > e.clientWidth; });
+  const gone = await p.evaluate(() => !document.getElementById("fo-atk-energy"));
+  const sentNow = await reports(p);
   await ctx.close();
   assert.ok(none, "the number was up before the reading came in");
-  assert.ok(shown, "no number");
+  assert.ok(sent, "no report");
+  assert.ok(gone, "a cut number was left up");
   assert.deepStrictEqual(after, before);
-  assert.ok(cut, "the row was not full: the test proves nothing");
+  assert.strictEqual(sentNow[0].why, "cut");
 });
 
 await t("a row with its own gap still has the number 6 px from your name", async () => {
@@ -246,16 +287,21 @@ await t("a row with its own gap still has the number 6 px from your name", async
   assert.deepStrictEqual(got, SHOWN);
 });
 
-await t("a row with its own gap, short of room, still moves nothing", async () => {
-  // The gap would come twice with the number in, and squeeze your HP.
+await t("a row with its own gap, short of room, shows no number, and nothing moves", async () => {
+  // The gap would come twice with the number in and squeeze your HP; taken
+  // back, the number is only cut, never in the way.
   const { ctx, p } = await open(ATTACK, { barsDelay: 4000, rowCss: ROW_CSS + ";column-gap:8px" });
   await squeeze(p, 4);
   const before = await layout(p);
-  const shown = await appears(p);
+  const sent = await reported(p);
   const after = await layout(p);
+  const gone = await p.evaluate(() => !document.getElementById("fo-atk-energy"));
+  const sentNow = await reports(p);
   await ctx.close();
-  assert.ok(shown, "no number");
+  assert.ok(sent, "no report");
+  assert.ok(gone, "a cut number was left up");
   assert.deepStrictEqual(after, before);
+  assert.strictEqual(sentNow[0].why, "cut");
 });
 
 // A row the number cannot go in without moving something gets none: it is
@@ -282,6 +328,7 @@ await t("a row laid out as a grid gets no number, nothing moves, and it is repor
   assert.strictEqual(noRoomLogs(logs).length, 2, JSON.stringify(logs.slice(-5)));
   assert.strictEqual(sentNow.length, 1);
   assert.strictEqual(sentNow[0].display, "grid");
+  assert.strictEqual(sentNow[0].why, "moved");
   assert.match(sentNow[0].v, /^\d+\.\d+\.\d+$/);
 });
 
@@ -301,6 +348,22 @@ await t("a row around a floated name gets no number, and nothing moves", async (
   assert.deepStrictEqual(after, before);
   assert.strictEqual(sentNow[0].display, "block");
   assert.strictEqual(sentNow[0].nameFloat, "left");
+});
+
+await t("a name centred in its row gets no number, and nothing moves", async () => {
+  // Held back while the number follows it, a name centred in the room it
+  // grew into would jump left: that row keeps none.
+  const { ctx, p } = await open(ATTACK, { barsDelay: 4000, rowCss: REAL_ROW, nameCss: GROWS + ";text-align:center" });
+  const before = await layout(p);
+  const sent = await reported(p);
+  const after = await layout(p);
+  const none = await p.evaluate(() => !document.getElementById("fo-atk-energy"));
+  const sentNow = await reports(p);
+  await ctx.close();
+  assert.ok(sent, "no report");
+  assert.ok(none, "a number was left up");
+  assert.deepStrictEqual(after, before);
+  assert.strictEqual(sentNow[0].why, "moved");
 });
 
 await t("Torn redrawing your header puts the number back after your name", async () => {
@@ -345,6 +408,29 @@ await t("another script's tag after your name is left alone", async () => {
   assert.ok(shown, "no number");
   assert.deepStrictEqual({ seen: quiet.seen, same: quiet.same }, { seen: [], same: true });
   assert.deepStrictEqual(order, ["other-tag", "fo-atk-energy"]);
+});
+
+await t("on Torn's own row, another script's tag after your name leaves the number 6 px past it", async () => {
+  // Your name is held back while the number is anywhere after it, not only
+  // right after it: the tag sits by your name's words, the number by the tag.
+  const { ctx, p } = await open(ATTACK, { rowCss: REAL_ROW, nameCss: GROWS });
+  const shown = await until(p, BOLT + "875");
+  await p.evaluate(() => {
+    const tag = document.createElement("span");
+    tag.id = "other-tag";
+    tag.textContent = "[x]";
+    document.querySelector('[class*="headerWrapper__"][class*="green__"] .user-name').after(tag);
+  });
+  await p.waitForTimeout(2500);
+  const gap = await p.evaluate(() => {
+    const words = (el) => { const g = document.createRange(); g.selectNodeContents(el); return g.getBoundingClientRect(); };
+    const name = document.querySelector('[class*="headerWrapper__"][class*="green__"] .user-name');
+    const tag = document.getElementById("other-tag");
+    return Math.round(words(document.getElementById("fo-atk-energy")).left - words(name).right - tag.getBoundingClientRect().width);
+  });
+  await ctx.close();
+  assert.ok(shown, "no number");
+  assert.strictEqual(gap, 6);
 });
 
 await t("no reading, no number, and nothing fails", async () => {
