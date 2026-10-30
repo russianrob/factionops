@@ -7434,15 +7434,7 @@ body.wb-chain-active {
                         try { startAttacksPoll(); } catch (_) {}
                         try { selfCheckGenocide(Date.now()); } catch (_) {}
 
-                        // Fetch faction's custom broadcast roles so
-                        // isLeader() gates the 📣 + Cooldowns the same way
-                        // the server does. Best-effort — on failure we
-                        // keep using the hardcoded defaults.
-                        getAction('/api/broadcast/roles').then(resp => {
-                            if (resp && Array.isArray(resp.roles)) {
-                                state.allowedBroadcastRoles = resp.roles;
-                            }
-                        }).catch(() => {});
+                        fetchBroadcastRoles();
 
                         // Pool opt-in is now silent. The settings panel
                         // still has the "Share my API key with faction
@@ -8454,6 +8446,18 @@ body.wb-chain-active {
         } catch (e) {
             warn('Could not hydrate JWT:', e && e.message);
         }
+    }
+
+    // The faction's custom broadcast roles, so isLeader() gates the 📣 and
+    // Cooldowns the way the server does: after a sign-in, and with the saved
+    // sign-in when Torn refuses the key or bounces it. Best-effort: on failure
+    // isLeader() keeps the built-in roles.
+    function fetchBroadcastRoles() {
+        getAction('/api/broadcast/roles').then(resp => {
+            if (resp && Array.isArray(resp.roles)) {
+                state.allowedBroadcastRoles = resp.roles;
+            }
+        }).catch(() => {});
     }
 
     function isLeader() {
@@ -17408,6 +17412,9 @@ body.wb-chain-active {
                 if (state.jwtToken) {
                     startPolling();
                     connectRealtime();
+                    // The saved sign-in still answers for this player, so
+                    // the faction's own roles still decide the 📣.
+                    fetchBroadcastRoles();
                 } else {
                     showToast('Not configured — click the gear icon to set up', 'warning');
                 }

@@ -270,7 +270,8 @@ await t("the message is text, never markup", async () => {
 const SENT = `{ message: "Let chain die", type: "warning", senderName: "Tester", senderId: "1000001", senderRole: "leader", ts: Date.now() - 1000 }`;
 
 // The war page's server, stubbed: the sign-in answers as a member of faction
-// 1000003 in position cfg.pos; the roles and the picks answer (a 13th pick
+// 1000003 in position cfg.pos (after cfg.authFails refusals, as Torn refuses a
+// dead key); the roles answer cfg.roles, the picks answer (a 13th pick
 // is refused, as the server does), and the send answers cfg.send after
 // cfg.sendDelay ms; the first
 // long-poll answers with the war and the second with cfg.lp's broadcasts,
@@ -282,7 +283,7 @@ const warPreamble = (cfg) => `(() => {
   const store = Object.assign({ factionops_apikey: "testkey1234", factionops_use_longpoll: cfg.longpoll !== false }, cfg.store || {});
   window.__store = store;
   const sent = ${SENT};
-  let longPolls = 0;
+  let longPolls = 0, auths = 0;
   window.__reqs = [];
   window.__posts = [];
   window.__said = [];
@@ -290,8 +291,11 @@ const warPreamble = (cfg) => `(() => {
   new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.textContent) window.__said.push(n.textContent); })
     .observe(document.documentElement, { childList: true, subtree: true });
   const reply = (url, method, data) => {
-    if (url.endsWith("/api/auth")) return { status: 200, body: { token: "jwt-test", player: { playerId: 1000002, playerName: "Tester", factionId: 1000003, factionPosition: cfg.pos || "Member" } } };
-    if (url.includes("/api/broadcast/roles")) return { status: 200, body: { roles: ["leader", "co-leader", "war leader", "banker"] } };
+    if (url.endsWith("/api/auth")) {
+      if (++auths <= (cfg.authFails || 0)) return { status: 401, body: { error: "Torn API error: Incorrect key (code 2)" } };
+      return { status: 200, body: { token: "jwt-test", player: { playerId: 1000002, playerName: "Tester", factionId: 1000003, factionPosition: "pos" in cfg ? cfg.pos : "Member" } } };
+    }
+    if (url.includes("/api/broadcast/roles")) return { status: 200, body: { roles: cfg.roles || ["leader", "co-leader", "war leader", "banker"] } };
     if (url.includes("/api/broadcast/picks")) {
       if (method === "POST") {
         const q = JSON.parse(data || "{}");
@@ -320,7 +324,7 @@ const warPreamble = (cfg) => `(() => {
   window.GM_registerMenuCommand = () => {};
   window.GM_xmlhttpRequest = (o) => {
     const url = String(o.url), method = o.method || "GET";
-    window.__reqs.push({ method, url });
+    window.__reqs.push({ method, url, auth: (o.headers && o.headers.Authorization) || "" });
     if (method === "POST") window.__posts.push({ url, body: JSON.parse(o.data || "null") });
     if (url.includes("/api/stream?")) {
       if (cfg.stream) setTimeout(() => {
@@ -363,6 +367,13 @@ async function openWar(cfg = {}) {
 }
 
 const SHOWN = "\u{1F4E3} Let chain die · Tester (leader)";
+
+// A sign-in FactionOps saved earlier, for a member of faction 1000003 in
+// `position`: what it falls back to when Torn refuses the key.
+const savedJwt = (position) => "h." + Buffer.from(JSON.stringify({ playerId: 1000002, playerName: "Tester",
+  factionId: 1000003, factionName: "Testers", factionPosition: position })).toString("base64url") + ".s";
+// A faction whose broadcast roles include a position of its own.
+const ROLES = ["leader", "co-leader", "warden"];
 
 await t("a long-poll reply's broadcasts put the bar up at once", async () => {
   const { ctx, p } = await openWar({ lp: 1 });
@@ -440,6 +451,16 @@ await t("a leader gets 📣 Broadcast after ⚙, and a member gets none", async 
   await mem.ctx.close();
   assert.deepStrictEqual(got, { text: "\u{1F4E3} Broadcast", prev: "fo-wp-settings", title: false, n: 1 });
   assert.deepStrictEqual(none, { bar: true, btn: 0 });
+});
+
+await t("a refused sign-in: the saved sign-in still brings the faction's roles, and a custom broadcast role gets 📣", async () => {
+  const jwt = savedJwt("Warden");
+  const { ctx, p } = await openWar({ authFails: 99, roles: ROLES, store: { factionops_jwt: jwt }, wait: 1000 });
+  const shown = await p.waitForSelector("#fo-wp-bcast", { timeout: 15000 }).then(() => true, () => false);
+  const asked = await p.evaluate(() => window.__reqs.filter((q) => q.url.includes("/api/broadcast/roles")).map((q) => q.auth));
+  await ctx.close();
+  assert.ok(shown, "no 📣 Broadcast");
+  assert.ok(asked.length >= 1 && asked.every((a) => a === "Bearer " + jwt), JSON.stringify(asked));
 });
 
 await t("the box: the faction's quick picks and a +; a pick fills the message and counts it", async () => {
