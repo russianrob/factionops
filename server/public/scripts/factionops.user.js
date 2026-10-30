@@ -1426,6 +1426,8 @@ html.wb-theme-light {
 .fo-wp-sub.warn { color: #ffd166; }
 .fo-wp-sub.bad { color: #ff7675; }
 .fo-wp-sub.muted { color: #8a6a5e; }
+.fo-wp-role { min-width: 0; overflow-wrap: anywhere; font-weight: 400; }
+.fo-wp-fail { color: #ff7675; }
 .fo-wp-plabel {
     display: block; margin: 2px 0 4px; font-size: 10px; font-weight: 700;
     letter-spacing: .06em; text-transform: uppercase; color: #ff9a72;
@@ -3876,6 +3878,11 @@ body.wb-chain-active {
         myFactionId: null,
         myFactionName: null,
         myFactionPosition: null,
+        // The same position in Torn's own wording, for showing.
+        myFactionPositionLabel: '',
+        // The last sign-in failed (Torn refused the key, the server refused
+        // the sign-in, or it never got there); cleared by one that works.
+        authFailed: false,
         enemyFactionId: null,
         enemyFactionName: null,
         onlinePlayers: [],
@@ -7388,6 +7395,7 @@ body.wb-chain-active {
                         const msg = (body && body.error) || 'FactionOps is not available for your faction.';
                         warn('Auth refused:', msg);
                         _authRejected = true;
+                        state.authFailed = true;
                         // The stored sign-in is for a faction the server no
                         // longer takes this player in (they have left it), and
                         // the chain bar's page reports go with it: drop it.
@@ -7399,6 +7407,7 @@ body.wb-chain-active {
                     if (res.status === 426) {
                         const msg = (body && body.error) || 'FactionOps is outdated — please update.';
                         warn('Auth blocked: outdated script.', msg);
+                        state.authFailed = true;
                         try {
                             showToast(msg + ' Open Tampermonkey → Check for userscript updates.', 'error');
                         } catch (_) {}
@@ -7406,6 +7415,7 @@ body.wb-chain-active {
                     }
                     if (res.status >= 200 && res.status < 300 && body && body.token) {
                         state.jwtToken = body.token;
+                        state.authFailed = false;
                         GM_setValue('factionops_jwt', body.token);
                         if (body.player) {
                             state.myPlayerId = String(body.player.playerId || body.player.id);
@@ -7413,6 +7423,7 @@ body.wb-chain-active {
                             state.myFactionId = String(body.player.factionId || '0');
                             state.myFactionName = body.player.factionName || '';
                             state.myFactionPosition = (body.player.factionPosition || '').toLowerCase();
+                            state.myFactionPositionLabel = body.player.factionPosition || '';
                         }
                         // Subscription expiry — 'permanent' for owner /
                         // factionops partner; epoch-ms for xanax-paying
@@ -7447,11 +7458,13 @@ body.wb-chain-active {
                     } else {
                         const msg = (body && body.error) || `HTTP ${res.status}`;
                         warn('Auth failed:', msg);
+                        state.authFailed = true;
                         reject(new Error(msg));
                     }
                 },
                 onerror(e) {
                     warn('Auth network error:', e);
+                    state.authFailed = true;
                     reject(new Error('Network error — is the server running?'));
                 },
             });
@@ -8441,6 +8454,7 @@ body.wb-chain-active {
             if (payload.factionName) state.myFactionName = payload.factionName;
             if (payload.factionPosition) {
                 state.myFactionPosition = String(payload.factionPosition).toLowerCase();
+                state.myFactionPositionLabel = String(payload.factionPosition);
             }
             log('Hydrated identity from JWT:', state.myPlayerName || '?', 'pos:', state.myFactionPosition);
         } catch (e) {
@@ -11206,21 +11220,42 @@ body.wb-chain-active {
         return { txt: 'Unknown', cls: 'muted' };
     }
 
+    // The panel's first row: the connection, then the position this sign-in
+    // holds in Torn's own wording, with 📣 when it may broadcast, and the
+    // subscription at the right. After a refused sign-in it says only that.
+    // Text, never markup: a faction names its own positions.
+    function fillWarPanelStatus(row) {
+        row.textContent = '';
+        var add = function (tag, cls, text) {
+            var n = document.createElement(tag);
+            if (cls) n.className = cls;
+            if (text) n.textContent = text;
+            row.appendChild(n);
+        };
+        if (state.authFailed) {
+            add('span', 'fo-wp-dot bad');
+            add('b', 'fo-wp-fail', 'Sign-in failed \u2014 check your key');
+            return;
+        }
+        var conn = state.connected ? ['Connected', 'ok']
+                 : state.connecting ? ['Connecting\u2026', 'warn'] : ['Disconnected', 'bad'];
+        add('span', 'fo-wp-dot ' + conn[1]);
+        add('b', '', conn[0]);
+        var label = String(state.myFactionPositionLabel || '').trim();
+        if (label) add('span', 'fo-wp-role', '\u00B7 ' + label + (isLeader() ? ' \uD83D\uDCE3' : ''));
+        var sub = subLine();
+        add('span', 'fo-wp-sub ' + sub.cls, sub.txt);
+    }
+
     function openWarSettings() {
         if (document.getElementById('fo-wp-panel')) { closeWarSettings(); return; }
         var gear = document.getElementById('fo-wp-settings');
-        var sub = subLine();
-        var conn = state.connected ? ['Connected', 'ok']
-                 : state.connecting ? ['Connecting\u2026', 'warn'] : ['Disconnected', 'bad'];
 
         var el = document.createElement('div');
         el.id = 'fo-wp-panel';
         el.className = 'fo-wp-panel';
         el.innerHTML =
-            '<div class="fo-wp-prow fo-wp-pstat">' +
-                '<span class="fo-wp-dot ' + conn[1] + '"></span><b>' + conn[0] + '</b>' +
-                '<span class="fo-wp-sub ' + sub.cls + '">' + sub.txt + '</span>' +
-            '</div>' +
+            '<div class="fo-wp-prow fo-wp-pstat" id="fo-wp-pstat"></div>' +
             '<label class="fo-wp-plabel">Torn API key</label>' +
             '<div class="fo-wp-prow">' +
                 // text, never password: a password field makes the browser
@@ -11243,6 +11278,7 @@ body.wb-chain-active {
                    '<input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '></label>';
         }
 
+        fillWarPanelStatus(el.querySelector('#fo-wp-pstat'));
         document.body.appendChild(el);
         // Anchored under the gear, clamped so it cannot hang off a phone.
         if (gear) {
@@ -11279,7 +11315,12 @@ body.wb-chain-active {
             if (!v) { note.textContent = 'Nothing to save.'; return; }
             setConfig('API_KEY', v);
             note.textContent = 'Saved \u2014 reconnecting\u2026';
-            try { authenticate(); } catch (_) {}
+            // The status row follows the sign-in, whichever way it goes.
+            var refill = function () {
+                var row = document.getElementById('fo-wp-pstat');
+                if (row) fillWarPanelStatus(row);
+            };
+            authenticate().then(refill, refill);
         });
         el.querySelector('#fo-wp-full').addEventListener('click', function () {
             closeWarSettings();

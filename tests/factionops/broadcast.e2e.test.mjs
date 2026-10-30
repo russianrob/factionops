@@ -375,6 +375,29 @@ const savedJwt = (position) => "h." + Buffer.from(JSON.stringify({ playerId: 100
 // A faction whose broadcast roles include a position of its own.
 const ROLES = ["leader", "co-leader", "warden"];
 
+// The war-page ⚙ panel's status row, the panel opened first if it is closed:
+// the dot's classes, the bold text and its colour, the role and the
+// subscription label (null when absent), and the right edges of the row's
+// parts and of the panel.
+async function pstat(p) {
+  if (!(await p.$("#fo-wp-panel"))) {
+    await p.waitForSelector("#fo-wp-settings", { timeout: 15000 });
+    await p.click("#fo-wp-settings");
+    await p.waitForSelector("#fo-wp-panel");
+  }
+  return p.evaluate(() => {
+    const panel = document.getElementById("fo-wp-panel"), row = panel.querySelector(".fo-wp-pstat");
+    const dot = row.querySelector(".fo-wp-dot"), b = row.querySelector("b");
+    const role = row.querySelector(".fo-wp-role"), sub = row.querySelector(".fo-wp-sub");
+    return {
+      dot: dot ? dot.className : "", b: b ? b.textContent : null, bColor: b ? getComputedStyle(b).color : null,
+      role: role ? role.textContent : null, sub: sub ? sub.textContent : null,
+      rowRight: Math.max(...[...row.children].map((c) => c.getBoundingClientRect().right)),
+      panelRight: panel.getBoundingClientRect().right,
+    };
+  });
+}
+
 await t("a long-poll reply's broadcasts put the bar up at once", async () => {
   const { ctx, p } = await openWar({ lp: 1 });
   const got = await bar(p);
@@ -461,6 +484,52 @@ await t("a refused sign-in: the saved sign-in still brings the faction's roles, 
   await ctx.close();
   assert.ok(shown, "no 📣 Broadcast");
   assert.ok(asked.length >= 1 && asked.every((a) => a === "Bearer " + jwt), JSON.stringify(asked));
+});
+
+await t("⚙ shows the role after Connected in Torn's own words, 📣 for a broadcast role; a member gets no 📣, no position no role", async () => {
+  const w1 = await openWar({ pos: "Warden", roles: ROLES });
+  const lead = await pstat(w1.p); await w1.ctx.close();
+  const w2 = await openWar({ pos: "Member", roles: ROLES });
+  const mem = await pstat(w2.p); await w2.ctx.close();
+  const w3 = await openWar({ pos: "", roles: ROLES });
+  const none = await pstat(w3.p); await w3.ctx.close();
+  assert.strictEqual(lead.b, "Connected");
+  assert.strictEqual(lead.role, "· Warden \u{1F4E3}");
+  assert.strictEqual(mem.role, "· Member");
+  assert.strictEqual(none.role, null);
+  assert.ok(lead.sub && mem.sub && none.sub, "the subscription label went");
+});
+
+await t("the role is text, never markup", async () => {
+  const { ctx, p } = await openWar({ pos: '<img src=x onerror="window.__xss=1">Boss', roles: ROLES });
+  const got = await pstat(p);
+  const imgs = await p.evaluate(() => document.querySelectorAll("#fo-wp-panel img").length), xss = await p.evaluate(() => window.__xss);
+  await ctx.close();
+  assert.ok(got.role && got.role.startsWith("· <img"), JSON.stringify(got));
+  assert.strictEqual(imgs, 0);
+  assert.strictEqual(xss, undefined);
+});
+
+await t("a refused sign-in: the row says so in red, and a key that works brings the role back", async () => {
+  const { ctx, p } = await openWar({ authFails: 1, pos: "Warden", roles: ROLES, store: { factionops_jwt: savedJwt("Warden") } });
+  const failed = await pstat(p);
+  await p.fill("#fo-wp-key", "testkey5678");
+  await p.click("#fo-wp-key-save");
+  await p.waitForTimeout(600);
+  const fixed = await pstat(p);
+  await ctx.close();
+  assert.deepStrictEqual([failed.b, failed.bColor, failed.role, failed.sub], ["Sign-in failed — check your key", "rgb(255, 118, 117)", null, null]);
+  assert.ok(failed.dot.includes("bad"), failed.dot);
+  assert.notStrictEqual(fixed.b, "Sign-in failed — check your key");
+  assert.strictEqual(fixed.role, "· Warden \u{1F4E3}");
+});
+
+await t("a long role wraps inside the panel and the subscription label stays", async () => {
+  const { ctx, p } = await openWar({ pos: "Supreme Commander of the Northern Fleet", roles: ROLES });
+  const got = await pstat(p);
+  await ctx.close();
+  assert.ok(got.role && got.sub, JSON.stringify(got));
+  assert.ok(got.rowRight <= got.panelRight, got.rowRight + " > " + got.panelRight);
 });
 
 await t("the box: the faction's quick picks and a +; a pick fills the message and counts it", async () => {
