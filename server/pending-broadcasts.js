@@ -34,15 +34,31 @@ export function queueForPlayers(playerIds, event) {
   for (const pid of (playerIds || [])) queueForPlayer(pid, event);
 }
 
+// Whether a fresh event waits for this player, without taking it: a held
+// /api/poll-long asks every second, and answers when one does.
+export function hasFor(playerId) {
+  const q = _queues.get(String(playerId));
+  if (!q || q.length === 0) return false;
+  const cutoff = Date.now() - STALE_AFTER_MS;
+  return q.some(e => e._queuedAt >= cutoff);
+}
+
 export function drainForPlayer(playerId) {
   const pid = String(playerId);
   const q = _queues.get(pid);
   if (!q || q.length === 0) return [];
   // Filter out stale entries (5+ min old) — clients shouldn't see
   // shouts that fired during a long disconnect.
-  const cutoff = Date.now() - STALE_AFTER_MS;
+  const now = Date.now();
+  const cutoff = now - STALE_AFTER_MS;
   const fresh = q.filter(e => e._queuedAt >= cutoff);
   _queues.delete(pid);
-  // Strip internal _queuedAt before returning to client.
-  return fresh.map(({ _queuedAt, ...rest }) => rest);
+  // Strip internal _queuedAt before returning to client, and add each
+  // event's age by this server's clock (from its send time, else from when
+  // it was queued): FactionOps' bar holds only what is left of its 10
+  // minutes, however late the poll that takes it.
+  return fresh.map(({ _queuedAt, ...rest }) => ({
+    ...rest,
+    age: Math.max(0, now - (Number.isFinite(rest.ts) ? rest.ts : _queuedAt)),
+  }));
 }

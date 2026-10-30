@@ -154,7 +154,7 @@ test("a member on the roster gets the latest; one off it gets null; with no rost
 
 test("a leader's broadcast goes out cleaned, with their position, and is remembered for the page-load ask", () => {
   const { call, sent } = lift();
-  const res = call("POST /api/broadcast", LEADER, { message: " Let  chain die ", type: "warning", warId: "war_1000303" });
+  const res = call("POST /api/broadcast", { ...LEADER, factionId: 1000303 }, { message: " Let  chain die ", type: "warning", warId: "war_1000303" });
   assert.deepEqual([res.code, res.body], [200, { success: true }]);
   assert.equal(sent.sse.length, 1);
   assert.equal(sent.sse[0].message, "Let chain die");
@@ -169,7 +169,7 @@ test("a leader's broadcast goes out cleaned, with their position, and is remembe
 
 test("a broadcast over 150 characters is refused, and nothing goes out", () => {
   const { call, sent } = lift();
-  const res = call("POST /api/broadcast", LEADER, { message: "x".repeat(151), type: "warning", warId: "war_1000306" });
+  const res = call("POST /api/broadcast", { ...LEADER, factionId: 1000306 }, { message: "x".repeat(151), type: "warning", warId: "war_1000306" });
   assert.deepEqual([res.code, res.body], [400, { error: "A broadcast is 1 to 150 characters." }]);
   assert.deepEqual([sent.sse.length, sent.io.length, sent.pushed.length], [0, 0, 0]);
   assert.equal(bb.latestBroadcast("war_1000306", Date.now()), null);
@@ -177,10 +177,28 @@ test("a broadcast over 150 characters is refused, and nothing goes out", () => {
 
 test("a member who is not a broadcaster is refused", () => {
   const { call, sent } = lift();
-  const res = call("POST /api/broadcast", MEMBER, { message: "Hold hits", type: "warning", warId: "war_1000307" });
+  const res = call("POST /api/broadcast", { ...MEMBER, factionId: 1000307 }, { message: "Hold hits", type: "warning", warId: "war_1000307" });
   assert.deepEqual([res.code, res.body], [403, { error: "Only leaders and bankers can broadcast to the faction." }]);
   assert.equal(sent.sse.length, 0);
   assert.equal(bb.latestBroadcast("war_1000307", Date.now()), null);
+});
+
+// The war id is the client's word, and every member of that war would see
+// the bar: a broadcaster sends into their own faction's war only.
+test("a broadcast into another faction's war is refused, and nothing is kept or sent", () => {
+  const { call, sent } = lift();
+  const res = call("POST /api/broadcast", LEADER, { message: "Hold hits", type: "warning", warId: "war_1000999" });
+  assert.deepEqual([res.code, res.body], [403, { error: "You can only broadcast to your own faction." }]);
+  assert.deepEqual([sent.sse.length, sent.io.length, sent.queued.length, sent.pushed.length], [0, 0, 0, 0]);
+  assert.equal(bb.latestBroadcast("war_1000999", Date.now()), null);
+});
+
+test("the owner may broadcast into any war, even from a sign-in with no faction", () => {
+  const { call, sent } = lift();
+  const res = call("POST /api/broadcast", { playerId: 137558, playerName: "Owner" }, { message: "Hold hits", type: "warning", warId: "war_1000309" });
+  assert.deepEqual([res.code, res.body], [200, { success: true }]);
+  assert.equal(sent.sse.length, 1);
+  assert.equal(bb.latestBroadcast("war_1000309", Date.now()).message, "Hold hits");
 });
 
 test("the page-load ask answers from the member's own faction's war", () => {

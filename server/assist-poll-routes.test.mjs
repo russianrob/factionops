@@ -38,7 +38,7 @@ function lift() {
   const box = {
     takeAssistFor, hasAssistFor, JSON, String, Date,
     console: { log: (m) => logs.push(String(m)) },
-    pendingBroadcasts: { drainForPlayer: () => [] },
+    pendingBroadcasts: { drainForPlayer: () => [], hasFor: () => false },
     chainWithLiveTimeout: (c) => c,
     _lpWarSections: () => ({ calls: { 2000009: { calledBy: { id: 1000004 } } } }),
     _lpWaiters: new Set(),

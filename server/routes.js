@@ -3087,8 +3087,9 @@ function assistForPoll(warId, playerId, playerName, via) {
 }
 // Build the {v, full, changed} body: only sections whose stamp is newer than
 // the client's `since` (all of them when since===0 or a stale cursor), plus
-// the member's next assist request, or `assist` when one is given.
-function _lpBuildDelta(war, sections, since, playerId, warId, playerName, assist) {
+// the member's next assist request, or `assist` when one is given, and the
+// member's queued broadcasts, or `broadcasts` when they are given.
+function _lpBuildDelta(war, sections, since, playerId, warId, playerName, assist, broadcasts) {
   const full = !(since > 0);
   const changed = {};
   for (const k in sections) {
@@ -3097,7 +3098,7 @@ function _lpBuildDelta(war, sections, since, playerId, warId, playerName, assist
   // Storage and the hash are deliberately free of the decrementing countdown;
   // re-derive it here so clients still reading `timeout` are unaffected.
   if (changed.chainData) changed.chainData = chainWithLiveTimeout(war.chainData, Date.now());
-  const bc = pendingBroadcasts.drainForPlayer(playerId);
+  const bc = broadcasts || pendingBroadcasts.drainForPlayer(playerId);
   if (bc && bc.length) changed.broadcasts = bc;
   const ar = assist || assistForPoll(warId, playerId, playerName, "poll-long");
   if (ar) changed.lastAssistRequest = ar;
@@ -3118,22 +3119,25 @@ function _lpFinish(w, body) {
 function _lpServe(w, war) {
   const sections = _lpWarSections(war, w.warId, w.factionId);
   _lpRefresh(war, sections);
-  // An assist request waiting for this member ends the hold too, so a copy
-  // that polls shows it within a second instead of at the next change.
-  if (war._lpv > w.since || hasAssistFor(w.warId, w.playerId)) {
+  // An assist request or a broadcast waiting for this member ends the hold
+  // too, so a copy that polls shows it within a second instead of at the
+  // next change.
+  if (war._lpv > w.since || hasAssistFor(w.warId, w.playerId) || pendingBroadcasts.hasFor(w.playerId)) {
     const body = _lpBuildDelta(war, sections, w.since, w.playerId, w.warId, w.playerName);
     _lpFinish(w, body);
-    // A request goes to every long-poll the member has held, not just the
-    // oldest: in Torn PDA a page they have left keeps its request open.
+    // A request or a broadcast goes to every long-poll the member has held,
+    // not just the oldest: in Torn PDA a page they have left keeps its
+    // request open.
     const ar = body.changed.lastAssistRequest;
-    if (ar) {
+    const bc = body.changed.broadcasts;
+    if (ar || bc) {
       let more = 0;
       for (const o of [..._lpWaiters]) {
         if (o.warId !== w.warId || String(o.playerId) !== String(w.playerId)) continue;
-        _lpFinish(o, _lpBuildDelta(war, sections, o.since, o.playerId, o.warId, o.playerName, ar));
+        _lpFinish(o, _lpBuildDelta(war, sections, o.since, o.playerId, o.warId, o.playerName, ar, bc));
         more++;
       }
-      if (more) console.log(`[assist] ${w.playerName} (${w.playerId}) got it on ${more} more held long-poll${more > 1 ? "s" : ""}`);
+      if (more && ar) console.log(`[assist] ${w.playerName} (${w.playerId}) got it on ${more} more held long-poll${more > 1 ? "s" : ""}`);
     }
     return true;
   }
@@ -3189,6 +3193,8 @@ router.get("/api/poll-long", (req, res, next) => {
   }
   // An assist request this member has not had yet goes out now.
   if (hasAssistFor(warId, playerId)) return res.json(_lpBuildDelta(war, sections, since, playerId, warId, playerName));
+  // So does a broadcast waiting for them.
+  if (pendingBroadcasts.hasFor(playerId)) return res.json(_lpBuildDelta(war, sections, since, playerId, warId, playerName));
   // Caught up (since === current version) → hold until a change or ~25s.
   const w = { res, req, warId, factionId, playerId, playerName, since, at: Date.now() };
   _lpWaiters.add(w);
@@ -3718,6 +3724,14 @@ router.post("/api/broadcast", requireAuth, (req, res) => {
     const pos = (factionPosition || "").toLowerCase();
     console.log(`[⚠️] Blocked unauthorized broadcast attempt from player ${playerId} (${playerName}) - Role: ${pos}`);
     return res.status(403).json({ error: "Only leaders and bankers can broadcast to the faction." });
+  }
+
+  // Into the sender's own faction's war only: the war id is the client's
+  // word, and every member of that war would see the bar. The owner can
+  // still send anywhere.
+  if (String(playerId) !== "137558" && String(warId) !== `war_${factionId}`) {
+    console.log(`[⚠️] Blocked broadcast into another faction's war from player ${playerId} (${playerName}): ${warId}`);
+    return res.status(403).json({ error: "You can only broadcast to your own faction." });
   }
 
   // FactionOps shows it as a bar about one line of a phone wide: trimmed,
