@@ -470,12 +470,17 @@
     let chainBarCheck = null;
     let chainBarFromOverlay = null;
 
-    // Where FactionOps' toasts sit: 6 px under the bar while it is up, so it
-    // never covers them, and at their usual 10 px otherwise. By id alone:
-    // this part runs on every page, before `state` exists.
+    // Where FactionOps' toasts sit: 6 px under the lower of the chain bar and
+    // the broadcast bar while either is up, so neither covers them, and at
+    // their usual 10 px otherwise. By id alone: this part runs on every page,
+    // before `state` exists.
     function chainBarToastTop() {
-        const bar = document.getElementById(CHAIN_BAR_ID);
-        return (bar ? Math.round(bar.getBoundingClientRect().bottom) + 6 : 10) + 'px';
+        let bottom = 0;
+        for (const id of [CHAIN_BAR_ID, BCAST_BAR_ID]) {
+            const bar = document.getElementById(id);
+            if (bar) bottom = Math.max(bottom, Math.round(bar.getBoundingClientRect().bottom));
+        }
+        return (bottom ? bottom + 6 : 10) + 'px';
     }
 
     function placeChainBarToasts() {
@@ -607,8 +612,202 @@
         setInterval(() => { try { chainBarTick(); } catch (_) {} }, 1000);
     }
 
+    // ---- The broadcast bar ---------------------------------------------------
+    // An admin's message from the war page's 📣 (POST /api/broadcast), as a bar
+    // across the top of every Torn page, built like CHAIN DYING and in its red
+    // and white. It flashes for its first 10 s on a page, then holds until it is
+    // tapped or 10 minutes after it was sent. A newer one takes its place.
+    //
+    // One record in GM storage drives it on every tab. FactionOps' own pages
+    // write it the moment the stream or a poll brings a broadcast, and every
+    // page draws from it once a second, so another tab shows it within a second
+    // and a tap anywhere takes it down everywhere. A page asks the server for
+    // the latest once when it loads, at most every 30 s across tabs and never
+    // without a sign-in, for a broadcast that went out while nothing on this
+    // device was connected. Nothing polls.
+    //
+    // Unlike the chain bar it takes taps, since a tap is how it goes, and it is
+    // not tied to focus: what it shows comes from the server, not off the page.
+    const BCAST_BAR_ID = 'fo-bcast-bar';
+    // Not "fo-chain...", for the same reason as CHAIN_BAR_STYLE_ID.
+    const BCAST_STYLE_ID = 'fo-style-bcast-bar';
+    // 10 minutes from sending: the server's own hold (broadcast-bar.js).
+    const BCAST_HOLD_MS = 600000;
+    const BCAST_FLASH_MS = 10000;
+    // How often a page may ask for the latest, across tabs...
+    const BCAST_CHECK_EVERY_MS = 30000;
+    // ...and how long a sign-in the server refuses stops the asking.
+    const BCAST_CHECK_PAUSE_MS = 600000;
+
+    // A broadcast as the bar keeps it, or null for one it cannot show. The
+    // deadline is this device's own time plus what is left of the hold: `age`
+    // is the server's count of how long ago it went out (the page-load answer
+    // carries it; the stream and the polls hand a broadcast over as it is
+    // sent), so a device clock that is minutes off changes nothing. Pure.
+    function bcastRecord(b, now) {
+        if (!b || typeof b.message !== 'string' || !b.message || !Number.isFinite(b.ts)) return null;
+        const age = Number.isFinite(b.age) ? Math.min(Math.max(b.age, 0), BCAST_HOLD_MS) : 0;
+        return {
+            key: b.ts + ':' + b.senderId,
+            message: b.message,
+            senderName: b.senderName || '',
+            senderRole: b.senderRole || '',
+            ts: b.ts,
+            until: now + BCAST_HOLD_MS - age,
+        };
+    }
+
+    // Whether `rec` takes the place of the broadcast held: a different one,
+    // sent later. The same one again (the stream and a poll both bring it, and
+    // so does the next page's ask) changes nothing, so a tap holds. Pure.
+    function bcastNewer(stored, rec) {
+        return !stored || (rec.key !== stored.key && rec.ts > stored.ts);
+    }
+
+    // "📣 Let chain die · <name> (<position>)", the position in Torn's own
+    // wording. Pure.
+    function bcastText(rec) {
+        let who = rec.senderName || '';
+        if (who && rec.senderRole) who += ' (' + rec.senderRole + ')';
+        return '📣 ' + rec.message + (who ? ' · ' + who : '');
+    }
+
+    function bcastShows(rec, dismissed, now) {
+        return !!rec && rec.key !== dismissed && now < rec.until;
+    }
+
+    // The bar's top: under Gym Coach's full-bar banner while that holds the
+    // top spot (renderChainBar's rule), and under the chain bar while that is
+    // up, else 10 px. Pure: the two rects, or null.
+    function bcastTop(gc, chain) {
+        let top = gc && gc.bottom > 0 && gc.top < 50 ? Math.round(gc.bottom) + 6 : 10;
+        if (chain) top = Math.max(top, Math.round(chain.bottom) + 6);
+        return top;
+    }
+
+    // The record held, or null. Stored as JSON text, since PDA's GM storage
+    // hands back strings; a host that hands back the object works too.
+    function readBcast() {
+        try {
+            const v = GM_getValue('factionops_bcast', '');
+            const rec = typeof v === 'string' ? (v ? JSON.parse(v) : null) : v;
+            return rec && typeof rec.key === 'string' ? rec : null;
+        } catch (_) { return null; }
+    }
+
+    // A broadcast from the stream, a poll or the page-load answer: kept when it
+    // is newer than the one held, and drawn at once.
+    function takeBroadcast(b) {
+        const rec = bcastRecord(b, Date.now());
+        if (!rec || !bcastNewer(readBcast(), rec)) return;
+        try { GM_setValue('factionops_bcast', JSON.stringify(rec)); } catch (_) { return; }
+        broadcastBarTick();
+    }
+
+    function renderBroadcastBar(rec, now) {
+        let el = document.getElementById(BCAST_BAR_ID);
+        if (el && (!rec || el.dataset.key !== rec.key)) {
+            el.parentNode.removeChild(el);
+            el = null;
+            if (!rec) placeChainBarToasts();
+        }
+        if (!rec || !document.body) return;
+        if (!document.getElementById(BCAST_STYLE_ID)) {
+            // CHAIN DYING's blink, and steady for anyone whose system asks for
+            // less motion. The class comes off after the first 10 s.
+            const css = document.createElement('style');
+            css.id = BCAST_STYLE_ID;
+            css.textContent =
+                '@keyframes fo-bcast-flash{0%,49%{background:#d50000;color:#fff}50%,100%{background:#fff;color:#d50000}}' +
+                '#' + BCAST_BAR_ID + '.fo-bcast-flash{animation:fo-bcast-flash 1s infinite}' +
+                '@media (prefers-reduced-motion:reduce){#' + BCAST_BAR_ID + '.fo-bcast-flash{animation:none}}';
+            (document.head || document.documentElement).appendChild(css);
+        }
+        if (!el) {
+            el = document.createElement('div');
+            el.id = BCAST_BAR_ID;
+            el.className = 'fo-bcast-flash';
+            el.dataset.key = rec.key;
+            el.dataset.shownAt = String(now);
+            // It wraps rather than run off a phone: a message is up to 150
+            // characters. Text only, never markup: admins type it, and it lands
+            // on every member's page.
+            el.style.cssText =
+                'position:fixed;left:50%;transform:translateX(-50%);z-index:2147483647;' +
+                'pointer-events:auto;cursor:pointer;box-sizing:border-box;width:max-content;max-width:94vw;' +
+                'background:#d50000;color:#fff;font:800 14px/1.25 Arial,sans-serif;text-align:center;' +
+                'padding:9px 16px;border-radius:7px;white-space:normal;overflow-wrap:anywhere;' +
+                'box-shadow:0 3px 14px rgba(0,0,0,.5);';
+            el.textContent = bcastText(rec);
+            // A tap takes it down here and, through the record, on every tab.
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                try { GM_setValue('factionops_bcast_dismissed', rec.key); } catch (_) {}
+                renderBroadcastBar(null, Date.now());
+            });
+            document.body.appendChild(el);
+        }
+        if (el.classList.contains('fo-bcast-flash') && now - Number(el.dataset.shownAt) >= BCAST_FLASH_MS) {
+            el.classList.remove('fo-bcast-flash');
+        }
+        const gc = document.getElementById('gcb-fullbar-nag');
+        const chain = document.getElementById(CHAIN_BAR_ID);
+        const top = bcastTop(gc ? gc.getBoundingClientRect() : null, chain ? chain.getBoundingClientRect() : null) + 'px';
+        if (el.style.top !== top) {
+            el.style.top = top;
+            placeChainBarToasts();
+        }
+    }
+
+    function broadcastBarTick() {
+        const now = Date.now();
+        let dismissed = '';
+        try { dismissed = String(GM_getValue('factionops_bcast_dismissed', '') || ''); } catch (_) {}
+        const rec = readBcast();
+        renderBroadcastBar(bcastShows(rec, dismissed, now) ? rec : null, now);
+    }
+
+    // The page-load ask, GET /api/broadcast/latest: at most every 30 s across
+    // tabs, only with the sign-in FactionOps stored, and 10 minutes' rest after
+    // the server refuses that sign-in. Its answer is the faction's latest
+    // broadcast while it is under 10 minutes old, with its age.
+    function checkBroadcastOnLoad() {
+        const jwt = GM_getValue('factionops_jwt', '');
+        if (!jwt) return;
+        const now = Date.now();
+        // PDA's GM storage hands numbers back as strings.
+        if (now < (Number(GM_getValue('factionops_bcast_next_check', 0)) || 0)) return;
+        GM_setValue('factionops_bcast_next_check', now + BCAST_CHECK_EVERY_MS);
+        httpRequest({
+            method: 'GET',
+            url: CONFIG.SERVER_URL + '/api/broadcast/latest',
+            headers: { 'Authorization': 'Bearer ' + jwt },
+            timeout: 10000,
+            onload(res) {
+                if (res.status === 401 || res.status === 403) {
+                    try { GM_setValue('factionops_bcast_next_check', Date.now() + BCAST_CHECK_PAUSE_MS); } catch (_) {}
+                    return;
+                }
+                if (res.status !== 200) return;
+                let data = null;
+                try { data = JSON.parse(res.responseText); } catch (_) {}
+                if (data && data.broadcast) takeBroadcast(data.broadcast);
+            },
+        });
+    }
+
+    function startBroadcastBar() {
+        // Not in Torn's frames: one bar, on the page itself.
+        if (window.top !== window.self) return;
+        try { checkBroadcastOnLoad(); } catch (_) {}
+        try { broadcastBarTick(); } catch (_) {}
+        setInterval(() => { try { broadcastBarTick(); } catch (_) {} }, 1000);
+    }
+
     startChainBar();
-    // Off FactionOps' own pages, the chain bar is all this script does.
+    startBroadcastBar();
+    // Off FactionOps' own pages, the two bars are all this script does.
     if (!isFactionOpsPage(location.href)) return;
 
     // =========================================================================
@@ -6567,18 +6766,12 @@ body.wb-chain-active {
         if (data.warPercentage !== undefined && data.warPercentage !== null) {
             state.warPercentage = data.warPercentage;
         }
-        // Show toast for broadcasts received via polling
-        if (data.lastBroadcast && data.lastBroadcast.timestamp) {
-            const lb = data.lastBroadcast;
-            if (!state._lastBroadcastTs || lb.timestamp > state._lastBroadcastTs) {
-                // Only show if broadcast is less than 60 seconds old
-                if (Date.now() - lb.timestamp < 60000) {
-                    showToast(`\uD83D\uDCE3 ${lb.message}`, lb.type || 'info');
-                    if (typeof firePdaNotification === 'function') {
-                        firePdaNotification('admin_broadcast', 'FactionOps Broadcast', lb.message);
-                    }
-                }
-                state._lastBroadcastTs = lb.timestamp;
+        // The broadcasts queued for this member (pending-broadcasts.js), the
+        // way a poll and a long-poll reply carry them: each goes to the
+        // broadcast bar, which keeps the newest and ignores one it already has.
+        if (Array.isArray(data.broadcasts)) {
+            for (const b of data.broadcasts) {
+                try { takeBroadcast(b); } catch (_) {}
             }
         }
         // Show toast for assist requests received via polling
@@ -6992,7 +7185,7 @@ body.wb-chain-active {
                     try {
                         const data = JSON.parse(match[1]);
                         if (data && data.type === 'global_toast') {
-                            showToast(`📣 ${data.message}`, data.type || 'info');
+                            takeBroadcast(data);
                             if (typeof firePdaNotification === 'function') {
                                 firePdaNotification('admin_broadcast', 'FactionOps Broadcast', data.message);
                             }

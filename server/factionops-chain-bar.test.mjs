@@ -267,13 +267,14 @@ test('no raw curly quotes: Torn PDA straightens them and the file stops parsing'
   assert.doesNotMatch(SRC, /[\u2018\u2019\u201C\u201D]/);
 });
 
-// A page for the toasts' spot: the chain bar's bottom edge (null: no bar),
-// and what the script adds to it.
-function toastPage(barBottom) {
+// A page for the toasts' spot: the chain bar's and the broadcast bar's bottom
+// edges (null: no bar), and what the script adds to it.
+function toastPage(barBottom, bcastBottom = null) {
   const added = {};
-  const bar = barBottom == null ? null : { getBoundingClientRect: () => ({ top: 10, bottom: barBottom }) };
+  const edge = (bottom) => (bottom == null ? null : { getBoundingClientRect: () => ({ top: 10, bottom }) });
+  const bars = { 'fo-chain-bar': edge(barBottom), 'fo-bcast-bar': edge(bcastBottom) };
   return {
-    getElementById: (id) => (id === 'fo-chain-bar' ? bar : added[id] || null),
+    getElementById: (id) => bars[id] || added[id] || null,
     createElement: () => ({ style: {} }),
     body: { appendChild: (e) => { added[e.id] = e; } },
   };
@@ -282,7 +283,7 @@ function toastPage(barBottom) {
 // script has it: nothing sets state.ui.chainBar.
 function toasts(page) {
   const names = ['chainBarToastTop', 'ensureCallToastContainer', 'getToastContainer'];
-  return new Function('document', 'const state = { ui: {} };\nlet toastContainer = null;\n' + konst('CHAIN_BAR_ID')
+  return new Function('document', 'const state = { ui: {} };\nlet toastContainer = null;\n' + konst('CHAIN_BAR_ID') + konst('BCAST_BAR_ID')
     + names.map(fn).join('\n') + '\nreturn { ' + names.join(', ') + ' };')(page);
 }
 
@@ -290,6 +291,11 @@ test("FactionOps' toasts go 6 px under the chain bar while it is up, and at 10 p
   assert.equal(toasts(toastPage(45)).chainBarToastTop(), '51px');
   assert.equal(toasts(toastPage(97.6)).chainBarToastTop(), '104px');
   assert.equal(toasts(toastPage(null)).chainBarToastTop(), '10px');
+});
+
+test("with the broadcast bar up too, the toasts go 6 px under the lower of the two", () => {
+  assert.equal(toasts(toastPage(44, 84)).chainBarToastTop(), '90px');
+  assert.equal(toasts(toastPage(null, 44)).chainBarToastTop(), '50px');
 });
 
 test('both toast stacks start under the bar while it is up, and the general one keeps to it', () => {

@@ -1,0 +1,380 @@
+// FactionOps' broadcast bar in a browser. On a Torn page that is not one of
+// FactionOps' own, a broadcast this device holds is up, flashing for 10 s,
+// then steady until a tap takes it down on every tab; signed in, the page asks
+// the server for the latest once when it loads, at most every 30 s, and rests
+// 10 minutes after a refusal; the bar sits under Gym Coach's banner and the
+// chain bar, with FactionOps' toasts under it. On the war page, the stream,
+// the long-poll and the short poll each put it up at once. Ids, names and the
+// key are made up.
+import fs from "fs";
+import assert from "assert";
+const { chromium } = await import("/root/.hermes/hermes-agent/node_modules/playwright-core/index.mjs");
+// FO_SRC points it at another copy (the mutants use it).
+const script = fs.readFileSync(process.env.FO_SRC || new URL("../../server/public/scripts/factionops.user.js", import.meta.url), "utf8");
+const version = (script.match(/@version\s+(\S+)/) || [])[1];
+const b = await chromium.launch({ args: ["--no-sandbox"] });
+const CHECK = "https://api.torn.com/faction/?selections=chain&";
+const LATEST = "/api/broadcast/latest";
+
+// A broadcast as the bar keeps it; the preamble adds `until`.
+const REC = { key: "1700000000000:1000001", message: "Let chain die", senderName: "Tester", senderRole: "leader", ts: 1700000000000 };
+// The page-load answer for a broadcast 2 s old.
+const ANSWER = { status: 200, body: { broadcast: { message: "Hold hits", type: "warning", senderName: "Tester", senderId: "1000001", senderRole: "leader", ts: 1700000005000, age: 2000 } } };
+
+// What a userscript manager (or Torn PDA) would give the script, with GM
+// storage and the server stubbed. cfg.held puts REC (with cfg.rec over it) in
+// storage, held for that many ms more; cfg.latest answers the page-load ask;
+// the chain check gets a live chain. Every request is logged with the
+// sign-in it carries.
+const preamble = (cfg) => `(() => {
+  const cfg = ${JSON.stringify(cfg)};
+  const store = Object.assign({ factionops_apikey: "testkey1234" }, cfg.store || {});
+  if (cfg.held !== undefined) store.factionops_bcast = JSON.stringify(Object.assign({}, ${JSON.stringify(REC)}, cfg.rec || {}, { until: Date.now() + cfg.held }));
+  window.__store = store;
+  window.__reqs = [];
+  const reply = (url) => {
+    if (url.startsWith(${JSON.stringify(CHECK)})) return { status: 200, body: { chain: { current: 1234, max: 2500, timeout: 42, modifier: 1, cooldown: 0 } } };
+    if (url.endsWith(${JSON.stringify(LATEST)})) return cfg.latest || null;
+    return null;
+  };
+  const log = (url, headers, via) => window.__reqs.push({ url: String(url).replace(/key=[^&]*/, "key=K"), auth: (headers && headers.Authorization) || "", via });
+  window.unsafeWindow = window;
+  window.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  window.GM_setValue = (k, v) => { store[k] = v; };
+  window.GM_addStyle = (css) => { const s = document.createElement("style"); s.textContent = css; document.head.appendChild(s); return s; };
+  window.GM_setClipboard = () => {};
+  window.GM_registerMenuCommand = () => {};
+  window.GM_xmlhttpRequest = (o) => {
+    log(o.url, o.headers, "gm");
+    const r = reply(String(o.url));
+    if (r) setTimeout(() => o.onload({ status: r.status, responseText: JSON.stringify(r.body) }), 50);
+  };
+  if (cfg.pda) {
+    window.flutter_inappwebview = { callHandler: () => Promise.resolve() };
+    window.PDA_httpGet = (url, headers) => {
+      log(url, headers, "pda");
+      const r = reply(String(url));
+      return Promise.resolve(r ? JSON.stringify(r.body) : "{}");
+    };
+  }
+})();`;
+
+// A Torn page that is not one of FactionOps' own. With `chain`, Torn's sidebar
+// chain bar with 0:42 left (the chain bar comes up); with `toasts`,
+// FactionOps' two toast stacks; with `gcBanner`, Gym Coach's banner at that top.
+const page = ({ chain = false, toasts = false, gcBanner = 0 }) => `<!doctype html><html><head><meta charset="utf-8"><title>gym</title></head><body>
+${toasts ? '<div id="fo-call-toast-container" style="position:fixed;top:10px">call</div><div id="wb-toast-container" style="position:fixed;top:10px">toast</div>' : ""}
+${gcBanner ? '<div id="gcb-fullbar-nag" style="position:fixed;top:' + gcBanner + 'px;left:50%;transform:translateX(-50%);height:36px;width:300px">E full</div>' : ""}
+${chain ? '<div id="sidebarroot"><a id="barChain" class="bar___x chain___x"><div class="bar-stats___x"><p class="bar-name___x">Chain:</p><p class="bar-value___x">1,234/2,500</p></div><p class="bar-timeleft___x">00:42</p></a></div>' : ""}
+<script src="/fo-preamble.js"></script><script src="/factionops.user.js"></script></body></html>`;
+
+async function open(opts = {}) {
+  const url = "https://www.torn.com/gym.php";
+  const ctx = await b.newContext({ viewport: { width: 393, height: 800 } });
+  const p = await ctx.newPage();
+  await p.route("**/*", (r) => {
+    const u = r.request().url();
+    if (u.endsWith("/fo-preamble.js")) return r.fulfill({ contentType: "application/javascript", body: preamble(opts.cfg || {}) });
+    if (u.endsWith("/factionops.user.js")) return r.fulfill({ contentType: "application/javascript", body: script });
+    if (u === url) return r.fulfill({ contentType: "text/html", body: page(opts) });
+    return r.fulfill({ status: 204, body: "" });
+  });
+  await p.goto(url, { waitUntil: "domcontentloaded" });
+  await p.waitForTimeout(opts.wait || 2600);
+  return { ctx, p };
+}
+const bar = (p) => p.evaluate(() => {
+  const e = document.getElementById("fo-bcast-bar");
+  if (!e) return null;
+  const cs = getComputedStyle(e), r = e.getBoundingClientRect();
+  return { text: e.textContent, anim: cs.animationName, pe: cs.pointerEvents, top: Math.round(r.top), bottom: Math.round(r.bottom), imgs: e.querySelectorAll("img").length };
+});
+const asks = (p) => p.evaluate((x) => window.__reqs.filter((q) => q.url.endsWith(x)), LATEST);
+const kept = (p) => p.evaluate(() => Object.assign({}, window.__store));
+const bcastNodes = (p) => p.evaluate(() => [...document.querySelectorAll('[id^="fo-bcast"],[id^="fo-style-bcast"]')].map((e) => e.id));
+
+let pass = 0, fail = 0;
+// FO_ONLY, a pattern, runs just the tests it names (the mutants use it).
+const only = process.env.FO_ONLY ? new RegExp(process.env.FO_ONLY) : null;
+const t = async (n, f) => {
+  if (only && !only.test(n)) return;
+  try { await f(); pass++; console.log("ok   " + n); } catch (e) { fail++; console.log("FAIL " + n + " :: " + e.message); }
+};
+console.log("FactionOps " + version);
+
+await t("a broadcast this device holds is up on any page, flashing, with who sent it, and a tap takes it down", async () => {
+  const { ctx, p } = await open({ cfg: { held: 600000 } });
+  const got = await bar(p);
+  await p.click("#fo-bcast-bar");
+  await p.waitForTimeout(300);
+  const after = await bar(p), store = await kept(p);
+  await ctx.close();
+  assert.ok(got, "no bar");
+  assert.strictEqual(got.text, "\u{1F4E3} Let chain die · Tester (leader)");
+  assert.strictEqual(got.anim, "fo-bcast-flash");
+  assert.strictEqual(got.pe, "auto");
+  assert.strictEqual(after, null, "still up after a tap");
+  assert.strictEqual(store.factionops_bcast_dismissed, REC.key);
+});
+
+await t("after 10 s it stops flashing and holds", async () => {
+  const { ctx, p } = await open({ cfg: { held: 600000 } });
+  await p.waitForTimeout(9500);
+  const got = await bar(p);
+  await ctx.close();
+  assert.ok(got, "gone after 10 s");
+  assert.strictEqual(got.anim, "none");
+});
+
+await t("a dismissed or expired broadcast shows nothing and adds nothing to the page", async () => {
+  const one = await open({ cfg: { held: 600000, store: { factionops_bcast_dismissed: REC.key } } });
+  const dismissed = await bcastNodes(one.p);
+  await one.ctx.close();
+  const two = await open({ cfg: { held: -1000 } });
+  const expired = await bcastNodes(two.p);
+  await two.ctx.close();
+  assert.deepStrictEqual(dismissed, []);
+  assert.deepStrictEqual(expired, []);
+});
+
+await t("signed in, the page asks once for the latest and puts it up; the next page within 30 s does not ask", async () => {
+  const one = await open({ cfg: { store: { factionops_jwt: "jwt-test" }, latest: ANSWER } });
+  const first = await asks(one.p), shown = await bar(one.p), store = await kept(one.p);
+  await one.ctx.close();
+  const two = await open({ cfg: { store, latest: ANSWER } });
+  const second = await asks(two.p), still = await bar(two.p);
+  await two.ctx.close();
+  assert.deepStrictEqual(first.map((q) => q.auth), ["Bearer jwt-test"]);
+  assert.ok(shown, "no bar");
+  assert.strictEqual(shown.text, "\u{1F4E3} Hold hits · Tester (leader)");
+  assert.deepStrictEqual(second, [], "asked again within 30 s");
+  assert.ok(still, "the next page lost the bar");
+});
+
+await t("a page-load answer 9 minutes old holds only the minute left", async () => {
+  const late = { status: 200, body: { broadcast: { ...ANSWER.body.broadcast, age: 540000 } } };
+  const { ctx, p } = await open({ cfg: { store: { factionops_jwt: "jwt-test" }, latest: late } });
+  const left = await p.evaluate(() => JSON.parse(window.__store.factionops_bcast).until - Date.now());
+  await ctx.close();
+  assert.ok(left > 55000 && left <= 60000, "left " + left);
+});
+
+await t("the same broadcast again after a tap stays down", async () => {
+  const one = await open({ cfg: { store: { factionops_jwt: "jwt-test" }, latest: ANSWER } });
+  await one.p.click("#fo-bcast-bar");
+  const store = await kept(one.p);
+  await one.ctx.close();
+  delete store.factionops_bcast_next_check;
+  const two = await open({ cfg: { store, latest: ANSWER } });
+  const asked = await asks(two.p), got = await bar(two.p);
+  await two.ctx.close();
+  assert.strictEqual(asked.length, 1, "the second page did not ask");
+  assert.strictEqual(got, null, "a tapped broadcast came back");
+});
+
+await t("a refused sign-in waits 10 minutes before asking again", async () => {
+  const { ctx, p } = await open({ cfg: { store: { factionops_jwt: "jwt-old" }, latest: { status: 401, body: { error: "Invalid token" } } } });
+  const wait = await p.evaluate(() => Number(window.__store.factionops_bcast_next_check) - Date.now());
+  await ctx.close();
+  assert.ok(wait > 590000 && wait <= 600000, "waits " + wait);
+});
+
+await t("without a sign-in it never asks", async () => {
+  const { ctx, p } = await open({ cfg: { latest: ANSWER } });
+  const asked = await asks(p), got = await bar(p);
+  await ctx.close();
+  assert.deepStrictEqual(asked, []);
+  assert.strictEqual(got, null);
+});
+
+await t("on Torn PDA the ask goes by PDA's own GET, with the sign-in", async () => {
+  const { ctx, p } = await open({ cfg: { pda: true, store: { factionops_jwt: "jwt-test" }, latest: ANSWER } });
+  const asked = await asks(p), got = await bar(p);
+  await ctx.close();
+  assert.deepStrictEqual(asked.map((q) => [q.via, q.auth]), [["pda", "Bearer jwt-test"]]);
+  assert.ok(got && got.text.startsWith("\u{1F4E3} Hold hits"), JSON.stringify(got));
+});
+
+await t("under the chain bar when both are up, and FactionOps' toasts under both", async () => {
+  const { ctx, p } = await open({ chain: true, toasts: true, cfg: { held: 600000 } });
+  const got = await bar(p);
+  const at = await p.evaluate(() => ({
+    chain: Math.round(document.getElementById("fo-chain-bar").getBoundingClientRect().bottom),
+    call: document.getElementById("fo-call-toast-container").style.top,
+    general: document.getElementById("wb-toast-container").style.top,
+  }));
+  await ctx.close();
+  assert.ok(got, "no bar");
+  assert.strictEqual(got.top, at.chain + 6);
+  assert.strictEqual(at.call, got.bottom + 6 + "px");
+  assert.strictEqual(at.general, got.bottom + 6 + "px");
+});
+
+await t("under Gym Coach's banner when that holds the top", async () => {
+  const { ctx, p } = await open({ gcBanner: 10, cfg: { held: 600000 } });
+  const got = await bar(p);
+  await ctx.close();
+  assert.ok(got, "no bar");
+  assert.strictEqual(got.top, 52);
+});
+
+await t("a broadcast another tab takes shows here within a second", async () => {
+  const { ctx, p } = await open({ cfg: {} });
+  const before = await bar(p);
+  await p.evaluate((rec) => window.GM_setValue("factionops_bcast", JSON.stringify(Object.assign({}, rec, { until: Date.now() + 600000 }))), REC);
+  await p.waitForTimeout(1200);
+  const after = await bar(p);
+  await ctx.close();
+  assert.strictEqual(before, null);
+  assert.ok(after && after.text.startsWith("\u{1F4E3} Let chain die"), JSON.stringify(after));
+});
+
+await t("the message is text, never markup", async () => {
+  const { ctx, p } = await open({ cfg: { held: 600000, rec: { message: '<img src=x onerror="window.__xss=1">Hold' } } });
+  const got = await bar(p), xss = await p.evaluate(() => window.__xss);
+  await ctx.close();
+  assert.ok(got, "no bar");
+  assert.strictEqual(got.imgs, 0);
+  assert.ok(got.text.startsWith("\u{1F4E3} <img"), got.text);
+  assert.strictEqual(xss, undefined);
+});
+
+// ---- On the war page -----------------------------------------------------
+
+// A broadcast as /api/broadcast sends it, 1 s old, built in the page.
+const SENT = `{ message: "Let chain die", type: "warning", senderName: "Tester", senderId: "1000001", senderRole: "leader", ts: Date.now() - 1000 }`;
+
+// The war page's server, stubbed: the sign-in answers as a member of faction
+// 1000003 in position cfg.pos; the roles and the picks answer; the first
+// long-poll answers with the war and the second with cfg.lp's broadcasts,
+// later ones hang; every short poll answers with cfg.poll's; with cfg.stream,
+// the stream starts and carries one global_toast. POST bodies are kept, and
+// so is every node's text (a toast fades in seconds).
+const warPreamble = (cfg) => `(() => {
+  const cfg = ${JSON.stringify(cfg)};
+  const store = Object.assign({ factionops_apikey: "testkey1234", factionops_use_longpoll: cfg.longpoll !== false }, cfg.store || {});
+  window.__store = store;
+  const sent = ${SENT};
+  let longPolls = 0;
+  window.__reqs = [];
+  window.__posts = [];
+  window.__said = [];
+  window.__picks = cfg.picks || ["Let chain die", "Good work all!"];
+  new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.textContent) window.__said.push(n.textContent); })
+    .observe(document.documentElement, { childList: true, subtree: true });
+  const reply = (url, method, data) => {
+    if (url.endsWith("/api/auth")) return { status: 200, body: { token: "jwt-test", player: { playerId: 1000002, playerName: "Tester", factionId: 1000003, factionPosition: cfg.pos || "Member" } } };
+    if (url.includes("/api/broadcast/roles")) return { status: 200, body: { roles: ["leader", "co-leader", "war leader", "banker"] } };
+    if (url.includes("/api/broadcast/picks")) {
+      if (method === "POST") {
+        const q = JSON.parse(data || "{}");
+        if (typeof q.add === "string") window.__picks = window.__picks.concat([q.add]);
+        if (typeof q.remove === "string") window.__picks = window.__picks.filter((x) => x !== q.remove);
+      }
+      return { status: 200, body: { picks: window.__picks } };
+    }
+    if (url.endsWith("/api/broadcast")) return cfg.send || { status: 200, body: { success: true } };
+    if (url.includes("/api/poll-long?")) {
+      longPolls++;
+      if (longPolls === 1) return { status: 200, body: { v: 1, full: true, changed: {} } };
+      if (longPolls === 2 && cfg.lp) return { status: 200, body: { v: 1, full: false, changed: { broadcasts: Array(cfg.lp).fill(sent) } } };
+      return null;
+    }
+    if (url.includes("/api/poll?")) return { status: 200, body: cfg.poll ? { broadcasts: Array(cfg.poll).fill(sent) } : {} };
+    return null;
+  };
+  window.unsafeWindow = window;
+  window.GM_getValue = (k, d) => (k in store ? store[k] : d);
+  window.GM_setValue = (k, v) => { store[k] = v; };
+  window.GM_deleteValue = (k) => { delete store[k]; };
+  window.GM_addStyle = (css) => { const s = document.createElement("style"); s.textContent = css; document.head.appendChild(s); return s; };
+  window.GM_setClipboard = () => {};
+  window.GM_registerMenuCommand = () => {};
+  window.GM_xmlhttpRequest = (o) => {
+    const url = String(o.url), method = o.method || "GET";
+    window.__reqs.push({ method, url });
+    if (method === "POST") window.__posts.push({ url, body: JSON.parse(o.data || "null") });
+    if (url.includes("/api/stream?")) {
+      if (cfg.stream) setTimeout(() => {
+        if (o.onloadstart) o.onloadstart();
+        o.onprogress({ responseText: "data: " + JSON.stringify(Object.assign({}, sent, { type: "global_toast", toastSeverity: "warning" })) + "\\n\\n" });
+      }, 300);
+      return { abort() {} };
+    }
+    const r = reply(url, method, o.data);
+    if (r) setTimeout(() => o.onload({ status: r.status, responseText: JSON.stringify(r.body) }), 50);
+    return { abort() {} };
+  };
+})();`;
+
+// Torn's war page with three enemy rows.
+const row = (id) => `<li class="enemy"><div class="member___x"><a href="/profiles.php?XID=${id}">Enemy${id}</a></div>`
+  + `<div class="points___x">10</div><div class="status___x">Okay</div>`
+  + `<div class="attack___x"><a class="t-blue" href="/loader.php?sid=attack&user2ID=${id}">Attack</a></div></li>`;
+const warPage = () => `<!doctype html><html><head><meta charset="utf-8"><title>war</title></head><body>
+<div id="mainContainer"><div class="faction-war"><div class="enemy-faction"><ul class="members-list">
+${row(2000001)}${row(2000002)}${row(2000003)}
+</ul></div></div></div>
+<script src="/fo-preamble.js"></script><script src="/factionops.user.js"></script></body></html>`;
+
+async function openWar(cfg = {}) {
+  const url = "https://www.torn.com/factions.php?step=your#/war/rank";
+  const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+  const p = await ctx.newPage();
+  await p.route("**/*", (r) => {
+    const u = r.request().url();
+    if (u.endsWith("/fo-preamble.js")) return r.fulfill({ contentType: "application/javascript", body: warPreamble(cfg) });
+    if (u.endsWith("/factionops.user.js")) return r.fulfill({ contentType: "application/javascript", body: script });
+    if (u.startsWith("https://www.torn.com/factions.php")) return r.fulfill({ contentType: "text/html", body: warPage() });
+    return r.fulfill({ status: 204, body: "" });
+  });
+  await p.goto(url, { waitUntil: "domcontentloaded" });
+  await p.waitForTimeout(cfg.wait || 4000);
+  return { ctx, p };
+}
+
+const SHOWN = "\u{1F4E3} Let chain die · Tester (leader)";
+
+await t("a long-poll reply's broadcasts put the bar up at once", async () => {
+  const { ctx, p } = await openWar({ lp: 1 });
+  const got = await bar(p);
+  await ctx.close();
+  assert.ok(got, "no bar");
+  assert.strictEqual(got.text, SHOWN);
+});
+
+await t("the short poll's broadcasts do the same", async () => {
+  const { ctx, p } = await openWar({ longpoll: false, poll: 1 });
+  const got = await bar(p);
+  await ctx.close();
+  assert.ok(got, "no bar");
+  assert.strictEqual(got.text, SHOWN);
+});
+
+await t("by the stream: a global_toast puts the bar up", async () => {
+  const { ctx, p } = await openWar({ stream: true });
+  const got = await bar(p);
+  await ctx.close();
+  assert.ok(got, "no bar");
+  assert.strictEqual(got.text, SHOWN);
+});
+
+await t("the same broadcast twice is one bar, and a tap holds against a later poll", async () => {
+  const { ctx, p } = await openWar({ longpoll: false, poll: 2 });
+  const polls = () => p.evaluate(() => window.__reqs.filter((q) => q.url.includes("/api/poll?")).length);
+  const bars = await p.evaluate(() => document.querySelectorAll("#fo-bcast-bar").length);
+  await p.click("#fo-bcast-bar");
+  const atTap = await polls();
+  // The short poll runs every 5 s in a war and every 20 s without one.
+  for (let waited = 0; waited < 25000 && (await polls()) === atTap; waited += 500) await p.waitForTimeout(500);
+  await p.waitForTimeout(1500);
+  const later = await polls(), after = await bar(p);
+  await ctx.close();
+  assert.strictEqual(bars, 1);
+  assert.ok(later > atTap, "no poll after the tap");
+  assert.strictEqual(after, null, "a later poll brought it back");
+});
+
+console.log(`\n${pass} passed, ${fail} failed`);
+await b.close();
+process.exit(fail ? 1 : 0);
