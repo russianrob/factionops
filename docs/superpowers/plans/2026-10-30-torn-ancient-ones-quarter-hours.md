@@ -4,7 +4,7 @@
 
 **Goal:** While M'aol is shielded, the box shows his route so far from the praetorians' falls. His next stop and where to fly count from the quarter hours he moves on, so they show even when the box didn't see him arrive.
 
-**Architecture:** Client-only change to `server/public/scripts/torn-ancient-ones.user.js`. A helper builds the runs of falls (shared with `routes()`), and `routeSoFar(r)` turns them into a note under the shielded M'aol. `nextMark(ms)` gives the next :00/:15/:30/:45. `nextStop()` and `maolFly()` count from the quarter hour of his newest reading instead of from when the box first saw him arrive.
+**Architecture:** Client-only change to `server/public/scripts/torn-ancient-ones.user.js`. A helper builds the runs of falls (shared with `routes()`), and `routeSoFar(r)` turns them into a note under the shielded M'aol. `nextMark(ms)` gives the next :00/:15/:30/:45. `nextStop()` and `maolFly()` count from the quarter hour in which the box first saw him where he is (`stopFrom(m)`), instead of 15 minutes from when it first saw him arrive.
 
 **Tech Stack:** a plain userscript; node:test + linkedom tests in `server/torn-ancient-ones.test.mjs`.
 
@@ -31,7 +31,7 @@ The owner's words: "will go next at :15 minute intervals".
 1. A reading gone stale across a quarter hour (a hidden tab draws but doesn't sweep): "next" shows the quarter hour he should have moved at, never a later one.
 2. A fall with no time (before the box watched, no TornStats time yet): no "route so far" at all, never a guessed order.
 3. Falls under 30 s apart: joined by `/`, never shown as an order.
-4. Torn's API lags a move by up to a sweep: for up to a minute after a quarter hour the box may still show him in the country he left.
+4. Torn's API lags a move by up to a sweep: for up to a minute after a quarter hour the box may still show him in the country he left. His next stop and where to fly must still count from when the box first saw him there (amended after the final review, which found them a stop off).
 5. A stop that starts after midnight: the end shows the date (the start's own formatting is unchanged).
 
 ---
@@ -39,12 +39,12 @@ The owner's words: "will go next at :15 minute intervals".
 ### Task 1: The route so far, and the quarter hours (Q1, Q2)
 
 **Files:**
-- Modify: `server/public/scripts/torn-ancient-ones.user.js` (`routes()`, new `fallRuns()`, `routeSoFar()`, `nextMark()`; `nextStop()`, `maolFly()`, `line()`)
+- Modify: `server/public/scripts/torn-ancient-ones.user.js` (`routes()`, new `fallRuns()`, `routeSoFar()`, `nextMark()`, `seenHere()`, `stopFrom()`; `nextStop()`, `maolFly()`, `line()`)
 - Test: `server/torn-ancient-ones.test.mjs`
 
 **Interfaces:**
 - Produces: `nextMark(ms: number): number` (the next multiple of `STOP_MS` after `ms`); `routeSoFar(r): string` ('' when none fell, any fall has no time, or a fallen one's country is unknown).
-- `nextStop(r, ways)` returns `at = nextMark(m.readAt)`. `maolFly(r, way, nowMs)` counts stops from `nextMark(m.readAt) - STOP_MS`, with the 17-minute guard only when `m.since` is set.
+- `seenHere(m)` = `m.since || m.changedAt`. `stopFrom(m)` = `seenHere(m)` when that is at most 17 minutes before `m.readAt`, else `m.readAt`. `nextStop(r, ways)` returns `at = nextMark(stopFrom(m))`. `maolFly(r, way, nowMs)` counts stops from `nextMark(stopFrom(m)) - STOP_MS`, and shows nothing when `seenHere(m)` is set and more than 17 minutes back. (Amended after the final review: the plan first counted from `m.readAt`, which a cached reading just after a quarter hour puts a stop behind.)
 
 - [ ] **Step 1: Write the failing tests.**
   - Wording: every `moves about every 15 min` becomes `moves at :00 :15 :30 :45`.

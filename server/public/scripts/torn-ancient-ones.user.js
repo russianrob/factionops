@@ -484,8 +484,8 @@
   // Where M'aol goes next: the country after his current one on each of his routes, from the
   // last back to the first. One country when they all give the same one, two when they give
   // two (in the order the routes give them), and null when they give more, when there is no
-  // route, or when he is somewhere not on them. When: the quarter hour after the reading that saw
-  // him there, which is in the past when that reading has gone stale.
+  // route, or when he is somewhere not on them. When: the quarter hour after stopFrom's time,
+  // which is in the past when his readings have gone stale.
   function nextStop(r, ways) {
     const m = r.npcs[MAOL];
     const places = [];
@@ -496,7 +496,7 @@
       if (places.indexOf(next) < 0) places.push(next);
     }
     if (!places.length || places.length > 2) return null;
-    return { places: places, at: nextMark(m.readAt) };
+    return { places: places, at: nextMark(stopFrom(m)) };
   }
 
   // The quarter hour (:00, :15, :30 or :45) after this time: M'aol moves on each.
@@ -512,8 +512,24 @@
   // The two ways of flying the box checks, and the share of the standard time each takes.
   const FLIGHTS = [['airstrip', 0.7], ['BCT', 0.3]];
   // M'aol seen in one country longer than this means his 15 minutes don't hold right now, so the
-  // box doesn't say where to fly for him.
+  // box doesn't say where to fly for him, and counts his stop from his newest reading.
   const OVERSTAY_MS = STOP_MS + 2 * 60 * 1000;
+
+  // When the box first saw M'aol where he is now (ms): his arrival when it was seen in time,
+  // else the reading that first showed him there, or that showed him come within reach there.
+  // 0 when it never has (its first reading of him, until he moves or comes within reach).
+  function seenHere(m) {
+    return m.since || m.changedAt;
+  }
+
+  // The time M'aol's stop where he is now counts from: when the box first saw him there, unless
+  // that is more than 17 minutes back, and then his newest reading. A reading just after a
+  // quarter hour can be Torn's cached answer from before he moved, so it alone can't tell which
+  // stop he is on.
+  function stopFrom(m) {
+    const seen = seenHere(m);
+    return seen && m.readAt - seen <= OVERSTAY_MS ? seen : m.readAt;
+  }
 
   // A flight's minutes from Torn City: the standard time times its share, rounded to the minute.
   // 0 for a place with no flight.
@@ -558,16 +574,18 @@
   }
 
   // Where each flight catches M'aol soonest, once his route is known: his stops are the quarter
-  // hours, in route order from the one his newest reading fell in, round and round. For each
+  // hours, in route order from the one stopFrom's time fell in, round and round. For each
   // country on the route, a flight catches him on his first stop there that he leaves at least 2
   // minutes after it lands. The soonest catch wins, and it is too late when he should die less
-  // than 2 minutes after it. No notes when he was seen arriving and has stayed longer than his 15
-  // minutes since.
+  // than 2 minutes after it. No notes when the box has seen him in one country for longer than
+  // his 15 minutes allow.
   function maolFly(r, way, nowMs) {
     const m = r.npcs[MAOL];
     const here = way && m ? way.indexOf(m.place) : -1;
-    if (here < 0 || (m.since && m.readAt - m.since > OVERSTAY_MS)) return [];
-    const start = nextMark(m.readAt) - STOP_MS;
+    if (here < 0) return [];
+    const seen = seenHere(m);
+    if (seen && m.readAt - seen > OVERSTAY_MS) return [];
+    const start = nextMark(stopFrom(m)) - STOP_MS;
     const dies = deathAt(m);
     return FLIGHTS.map((f) => {
       let best = null;
