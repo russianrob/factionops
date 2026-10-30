@@ -765,10 +765,13 @@
     writeReading(start);
     get(TORNSTATS_URL).then((text) => {
       try {
-        const list = JSON.parse(text);
+        const data = JSON.parse(text);
+        // The six are under npcs, beside TornStats' own route, as the feed is served now; it was
+        // once a bare list of them.
+        const list = Array.isArray(data) ? data : (data && Array.isArray(data.npcs) ? data.npcs : []);
         const r = readReading();
         const now = Date.now();
-        (Array.isArray(list) ? list : []).forEach((item) => {
+        list.forEach((item) => {
           const id = Number(item && item.torn_id);
           const at = Date.parse(item && item.hosped_at);
           if (IDS.indexOf(id) >= 0 && at > 0 && at <= now + 60000 && now - at <= FELL_MAX_AGE_MS) r.fell[id] = at;

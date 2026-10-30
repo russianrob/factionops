@@ -1089,6 +1089,15 @@ test('a beaten one with no time of its own gets TornStats\' time', async () => {
   assert.deepEqual(env.reading().fell, { 100: Date.parse('2026-10-26T11:52:37Z'), 101: Date.parse('2026-10-26T10:24:02Z'), 104: Date.parse('2026-10-26T11:52:37Z') });
 });
 
+test('TornStats\' feed as it is served now, the six under npcs beside its own route, gives its times too', async () => {
+  const { env, w } = await at1215({ tornstats: { npcs: TS_1215, route: { hop_minutes: 15, summon_hours: 48 } } });
+  assert.equal(lineText(w, 101), 'Nol\'dasaym  Mexico  beaten 10:24 TCT');
+  assert.equal(lineText(w, 100), 'Dyno\'salam  Cayman Islands  beaten 11:52 TCT');
+  assert.equal(lineText(w, 104), 'Ladso\'myna  United Kingdom  beaten 11:52 TCT');
+  assert.deepEqual(env.reading().fell, { 100: Date.parse('2026-10-26T11:52:37Z'), 101: Date.parse('2026-10-26T10:24:02Z'), 104: Date.parse('2026-10-26T11:52:37Z') });
+  assert.deepEqual(maolNotes(w), ['route so far Mexico > Cayman Islands/United Kingdom']);
+});
+
 test('TornStats\' times give the route from the falls, but two under 30 s apart give none', async () => {
   const at = Date.UTC(2026, 9, 26, 12, 30);
   const feed = (ukAt) => [fellEntry(101, '2026-10-26T10:24:02Z'), fellEntry(100, '2026-10-26T11:52:37Z'), fellEntry(104, ukAt), fellEntry(102, '2026-10-26T12:10:00Z'), fellEntry(103, '2026-10-26T12:20:00Z')];
