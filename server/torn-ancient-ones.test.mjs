@@ -957,21 +957,22 @@ test('his route from the falls: each timed by the script, at least 30 s apart', 
 
 test('his stop times put the date on the first one past midnight', async () => {
   const env = device({ torn: allUp() });
-  env.now = Date.UTC(2026, 9, 26, 23, 35);
+  // Midnight comes partway round the lap, so the date has to wait for the stop it belongs to.
+  env.now = Date.UTC(2026, 9, 26, 23, 20);
   env.store[KEY_STORE] = KEY;
   const w = env.tab().run();
   await env.advance(0);
   await fall(env, [101, 100, 104, 102, 103]);
   await go(env, ['Mexico']);
   assert.deepEqual(maolNotes(w).slice(1), [
-    'next Cayman Islands about 23:45 TCT',
-    'then United Kingdom Oct 27 00:00, Canada 00:15, Hawaii 00:30, Mexico 00:45 TCT',
+    'next Cayman Islands about 23:30 TCT',
+    'then United Kingdom 23:45, Canada Oct 27 00:00, Hawaii 00:15, Mexico 00:30 TCT',
   ]);
 });
 
 test('a reading from another day puts that day\'s date on his stop times, as on his next stop', async () => {
   const { env, w } = await maolInMexico();
-  // Torn refuses the key from here on, so the reading stays the one from 10:47 TCT.
+  // Torn refuses the key from here on, so the reading stays the one from 10:46 TCT.
   env.tornError = { code: 2, error: 'Incorrect key' };
   await env.advance(MIN);
   await env.advance(22 * 60 * MIN);
