@@ -9,7 +9,7 @@ import { parseHTML } from 'linkedom';
 // TAO_SRC lets a mutant copy be tested in place of the served file.
 const SRC = process.env.TAO_SRC || '/opt/warboard/server/public/scripts/torn-ancient-ones.user.js';
 const META = SRC.replace(/\.user\.js$/, '.meta.js');
-const RUNNING = '[Torn Ancient Ones 1.0.5] running';
+const RUNNING = '[Torn Ancient Ones 1.0.6] running';
 const KEY_STORE = 'torn-ancient-ones-key';
 const READING_STORE = 'torn-ancient-ones-reading';
 const BOX_STORE = 'torn-ancient-ones-box';
@@ -250,7 +250,7 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.deepEqual(tags, [
     'name Torn Ancient Ones',
     'namespace RussianRob',
-    'version 1.0.5',
+    'version 1.0.6',
     'description Where Torn\'s Halloween Ancient Ones are (M\'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M\'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.',
     'author RussianRob',
     'downloadURL https://tornwar.com/scripts/torn-ancient-ones.user.js',
@@ -267,8 +267,9 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.match(src, /\n\/\/ TORN'S API TERMS\n/);
   assert.match(src, /\n\/\/ Data Sharing {11}None\. The script also reads TornStats' public feed of the six, and sends\n/);
   assert.match(src, /\n\/\/ Key Access Level {7}Public\.\n/);
-  assert.match(src, /\n  const VERSION = '1\.0\.5';\n/);
+  assert.match(src, /\n  const VERSION = '1\.0\.6';\n/);
   assert.match(src, /\n\/\/ CHANGELOG\n/);
+  assert.match(src, /\n\/\/ v1\.0\.6  - Once M'aol has stayed in one country more than 17 minutes, his route shows\n/);
   assert.match(src, /\n\/\/ v1\.0\.5  - Once M'aol can be hit, the times he should reach each country on one lap\n/);
   assert.match(src, /\n\/\/ v1\.0\.4  - Reads TornStats' feed as it is served now \(the six under npcs\), so the\n/);
   assert.match(src, /\n\/\/ v1\.0\.3  - While M'aol is shielded, his route so far shows as his praetorians fall:/);
@@ -296,7 +297,7 @@ test('the source is plain ASCII, guards every GM_* call, holds PDA\'s placeholde
 
 test('it says once in the console that it is running, and a second copy on the same page does nothing', async () => {
   const { env, w } = await started();
-  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.5');
+  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.6');
   w.run();
   await env.advance(0);
   assert.deepEqual(w.logs, [RUNNING]);
@@ -1351,13 +1352,18 @@ test('M\'aol: his own death estimate, and too late for a flight that catches him
   assert.deepEqual(flyNotes(slow.w), ['dies about 11:00 TCT', 'airstrip: too late', 'BCT: fly to Mexico, he\'s there 10:45-11:00 TCT']);
 });
 
-test('M\'aol: nothing on where to fly once he has stayed more than 17 minutes in one country', async () => {
+test('M\'aol: nothing on where to fly, and his route in place of his stop times, once he has stayed more than 17 minutes in one country', async () => {
   const { env, w } = await maolInMexico();
   await env.advance(17 * MIN);
   assert.equal(flyNotes(w).length, 2, 'seen there 17 minutes after he arrived');
+  assert.ok(maolNotes(w).includes('then United Kingdom 11:15, Canada 11:30, Hawaii 11:45, Mexico 12:00 TCT'), JSON.stringify(maolNotes(w)));
   await env.advance(MIN);
   assert.deepEqual(flyNotes(w), []);
-  assert.deepEqual(notes(w, 23).slice(0, 2), ['moves at :00 :15 :30 :45, here since 10:46 TCT', 'next Cayman Islands about 11:15 TCT']);
+  assert.deepEqual(maolNotes(w), [
+    'moves at :00 :15 :30 :45, here since 10:46 TCT',
+    'next Cayman Islands about 11:15 TCT',
+    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+  ]);
 });
 
 test('M\'aol: a stop that runs past midnight shows the date on its end', async () => {

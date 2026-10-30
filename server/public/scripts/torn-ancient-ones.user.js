@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Ancient Ones
 // @namespace    RussianRob
-// @version      1.0.5
+// @version      1.0.6
 // @description  Where Torn's Halloween Ancient Ones are (M'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-ancient-ones.user.js
@@ -29,6 +29,9 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.6  - Once M'aol has stayed in one country more than 17 minutes, his route shows
+//           in place of his stop times, as where to fly already hides then: the box
+//           can't time his stops until he moves.
 // v1.0.5  - Once M'aol can be hit, the times he should reach each country on one lap
 //           round show after his next stop, in place of his route: "then United
 //           Kingdom 11:15, Mexico 11:30, ... TCT". With no next stop, his route as before.
@@ -55,7 +58,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.5';
+  const VERSION = '1.0.6';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
@@ -547,6 +550,13 @@
     return seen && m.readAt - seen <= OVERSTAY_MS ? seen : m.readAt;
   }
 
+  // True when the box has seen M'aol in one country more than 17 minutes: his 15 minutes don't
+  // hold right now, so it can't time his stops.
+  function overstayed(m) {
+    const seen = seenHere(m);
+    return !!seen && m.readAt - seen > OVERSTAY_MS;
+  }
+
   // A flight's minutes from Torn City: the standard time times its share, rounded to the minute.
   // 0 for a place with no flight.
   function flightMin(place, share) {
@@ -599,8 +609,7 @@
     const m = r.npcs[MAOL];
     const here = way && m ? way.indexOf(m.place) : -1;
     if (here < 0) return [];
-    const seen = seenHere(m);
-    if (seen && m.readAt - seen > OVERSTAY_MS) return [];
+    if (overstayed(m)) return [];
     const start = nextMark(stopFrom(m)) - STOP_MS;
     const dies = deathAt(m);
     return FLIGHTS.map((f) => {
@@ -965,9 +974,10 @@
       const way = ways.length === 1 ? ways[0] : null;
       const stop = nextStop(r, ways);
       if (stop) notes.push('next ' + stop.places.join(' or ') + ' about ' + clock(stop.at, nowMs));
-      // After his next stop, when he should be in each country on one lap round; with no next stop
-      // to count from (he is somewhere off his route), the route itself.
-      if (way && stop) notes.push('then ' + lapTimes(way, stop));
+      // After his next stop, when he should be in each country on one lap round; the route itself
+      // when there is no next stop to count from (he is somewhere off his route), or the box can't
+      // time his stops (he has stayed in one country more than 17 minutes).
+      if (way && stop && !overstayed(n)) notes.push('then ' + lapTimes(way, stop));
       else if (way) notes.push('route ' + way.join(' > '));
       const dies = deathAt(n);
       if (dies) notes.push('dies about ' + clock(dies, nowMs));
