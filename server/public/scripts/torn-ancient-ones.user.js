@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Ancient Ones
 // @namespace    RussianRob
-// @version      1.0.4
+// @version      1.0.5
 // @description  Where Torn's Halloween Ancient Ones are (M'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-ancient-ones.user.js
@@ -29,6 +29,9 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.5  - Once M'aol can be hit, the times he should reach each country on one lap
+//           round show after his next stop, in place of his route: "then United
+//           Kingdom 11:15, Mexico 11:30, ... TCT". With no next stop, his route as before.
 // v1.0.4  - Reads TornStats' feed as it is served now (the six under npcs), so the
 //           beaten ones show their defeat times again, and with them M'aol's route so
 //           far, his route, next stop and where to fly.
@@ -52,7 +55,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.4';
+  const VERSION = '1.0.5';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
@@ -507,6 +510,16 @@
     return Math.floor(ms / STOP_MS) * STOP_MS + STOP_MS;
   }
 
+  // The stops after his next one, round his route to where he is now, each with the quarter hour
+  // he should get there: "United Kingdom 11:15, Mexico 11:30, Hawaii 11:45, Canada 12:00 TCT".
+  // The next stop is one of the route's countries, as nextStop took it from the route.
+  function lapTimes(way, stop) {
+    const i = way.indexOf(stop.places[0]);
+    const parts = [];
+    for (let k = 1; k < way.length; k++) parts.push(way[(i + k) % way.length] + ' ' + hhmm(stop.at + k * STOP_MS));
+    return parts.join(', ') + ' TCT';
+  }
+
   // ===== WHERE TO FLY =====
 
   // Standard flight minutes from Torn City to each of COUNTRIES, in the same order, from
@@ -952,7 +965,10 @@
       const way = ways.length === 1 ? ways[0] : null;
       const stop = nextStop(r, ways);
       if (stop) notes.push('next ' + stop.places.join(' or ') + ' about ' + clock(stop.at, nowMs));
-      if (way) notes.push('route ' + way.join(' > '));
+      // After his next stop, when he should be in each country on one lap round; with no next stop
+      // to count from (he is somewhere off his route), the route itself.
+      if (way && stop) notes.push('then ' + lapTimes(way, stop));
+      else if (way) notes.push('route ' + way.join(' > '));
       const dies = deathAt(n);
       if (dies) notes.push('dies about ' + clock(dies, nowMs));
       maolFly(r, way, nowMs).forEach((note) => notes.push(note));

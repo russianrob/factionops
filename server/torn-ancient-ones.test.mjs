@@ -9,7 +9,7 @@ import { parseHTML } from 'linkedom';
 // TAO_SRC lets a mutant copy be tested in place of the served file.
 const SRC = process.env.TAO_SRC || '/opt/warboard/server/public/scripts/torn-ancient-ones.user.js';
 const META = SRC.replace(/\.user\.js$/, '.meta.js');
-const RUNNING = '[Torn Ancient Ones 1.0.4] running';
+const RUNNING = '[Torn Ancient Ones 1.0.5] running';
 const KEY_STORE = 'torn-ancient-ones-key';
 const READING_STORE = 'torn-ancient-ones-reading';
 const BOX_STORE = 'torn-ancient-ones-box';
@@ -250,7 +250,7 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.deepEqual(tags, [
     'name Torn Ancient Ones',
     'namespace RussianRob',
-    'version 1.0.4',
+    'version 1.0.5',
     'description Where Torn\'s Halloween Ancient Ones are (M\'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M\'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.',
     'author RussianRob',
     'downloadURL https://tornwar.com/scripts/torn-ancient-ones.user.js',
@@ -267,8 +267,9 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.match(src, /\n\/\/ TORN'S API TERMS\n/);
   assert.match(src, /\n\/\/ Data Sharing {11}None\. The script also reads TornStats' public feed of the six, and sends\n/);
   assert.match(src, /\n\/\/ Key Access Level {7}Public\.\n/);
-  assert.match(src, /\n  const VERSION = '1\.0\.4';\n/);
+  assert.match(src, /\n  const VERSION = '1\.0\.5';\n/);
   assert.match(src, /\n\/\/ CHANGELOG\n/);
+  assert.match(src, /\n\/\/ v1\.0\.5  - Once M'aol can be hit, the times he should reach each country on one lap\n/);
   assert.match(src, /\n\/\/ v1\.0\.4  - Reads TornStats' feed as it is served now \(the six under npcs\), so the\n/);
   assert.match(src, /\n\/\/ v1\.0\.3  - While M'aol is shielded, his route so far shows as his praetorians fall:/);
   assert.match(src, /\n\/\/ v1\.0\.2  - M'aol's next stop shows whenever it is certain,/);
@@ -295,7 +296,7 @@ test('the source is plain ASCII, guards every GM_* call, holds PDA\'s placeholde
 
 test('it says once in the console that it is running, and a second copy on the same page does nothing', async () => {
   const { env, w } = await started();
-  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.4');
+  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.5');
   w.run();
   await env.advance(0);
   assert.deepEqual(w.logs, [RUNNING]);
@@ -923,8 +924,9 @@ async function go(env, places) {
     await env.advance(MIN);
   }
 }
-// M'aol's notes on how he moves: where he is since when, his next stop, and his route.
-const maolNotes = (w) => notes(w, 23).filter((n) => /^(moves|next|route) /.test(n));
+// M'aol's notes on how he moves: where he is since when, his next stop, the stops after it, and
+// his route.
+const maolNotes = (w) => notes(w, 23).filter((n) => /^(moves|next|then|route) /.test(n));
 
 test('his route from his moves: once he has been seen in all five countries, in the order first seen', async () => {
   const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
@@ -934,7 +936,7 @@ test('his route from his moves: once he has been seen in all five countries, in 
   assert.deepEqual(maolNotes(w), [
     'moves at :00 :15 :30 :45, here since 10:45 TCT',
     'next Mexico about 11:00 TCT',
-    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+    'then Cayman Islands 11:15, United Kingdom 11:30, Canada 11:45, Hawaii 12:00 TCT',
   ]);
   assert.deepEqual(env.reading().trail, ['Mexico', 'Cayman Islands', 'United Kingdom', 'Cayman Islands', 'Canada', 'Hawaii']);
 });
@@ -947,7 +949,18 @@ test('his route from the falls: each timed by the script, at least 30 s apart', 
   assert.deepEqual(maolNotes(w), [
     'moves at :00 :15 :30 :45, here since 10:46 TCT',
     'next Cayman Islands about 11:00 TCT',
-    'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii',
+    'then United Kingdom 11:15, Mexico 11:30, Hawaii 11:45, Canada 12:00 TCT',
+  ]);
+});
+
+test('after his next stop, the time he\'ll be in each country on one lap round, in place of his route', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  await fall(env, [102, 100, 104, 101, 103]);
+  await go(env, ['Canada']);
+  assert.deepEqual(maolNotes(w), [
+    'moves at :00 :15 :30 :45, here since 10:46 TCT',
+    'next Cayman Islands about 11:00 TCT',
+    'then United Kingdom 11:15, Mexico 11:30, Hawaii 11:45, Canada 12:00 TCT',
   ]);
 });
 
@@ -976,9 +989,9 @@ test('his moves beat the falls when they disagree', async () => {
   const { env, w } = await started({ torn: allUp() });
   await fall(env, [102, 100, 104, 101, 103]);
   await go(env, ['Mexico', 'Hawaii', 'Canada', 'Cayman Islands']);
-  assert.deepEqual(maolNotes(w).slice(1), ['next United Kingdom about 11:00 TCT', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii']);
+  assert.deepEqual(maolNotes(w).slice(1), ['next United Kingdom about 11:00 TCT', 'then Mexico 11:15, Hawaii 11:30, Canada 11:45, Cayman Islands 12:00 TCT']);
   await go(env, ['United Kingdom']);
-  assert.deepEqual(maolNotes(w).slice(1), ['next Mexico about 11:00 TCT', 'route Mexico > Hawaii > Canada > Cayman Islands > United Kingdom']);
+  assert.deepEqual(maolNotes(w).slice(1), ['next Mexico about 11:00 TCT', 'then Hawaii 11:15, Canada 11:30, Cayman Islands 11:45, United Kingdom 12:00 TCT']);
 });
 
 test('the next stop is on the quarter hour even when his arrival wasn\'t seen in time, and there is none from Torn City', async () => {
@@ -990,7 +1003,7 @@ test('the next stop is on the quarter hour even when his arrival wasn\'t seen in
   await env.advance(4 * MIN);
   w.show();
   await env.advance(0);
-  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'next Cayman Islands about 11:00 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'next Cayman Islands about 11:00 TCT', 'then United Kingdom 11:15, Canada 11:30, Hawaii 11:45, Mexico 12:00 TCT']);
   env.torn[23] = up(23, 'Torn City');
   await env.advance(MIN);
   assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:49 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
@@ -1102,13 +1115,13 @@ test('TornStats\' feed as it is served now, the six under npcs beside its own ro
 test('TornStats\' times give the route from the falls, but two under 30 s apart give none', async () => {
   const at = Date.UTC(2026, 9, 26, 12, 30);
   const feed = (ukAt) => [fellEntry(101, '2026-10-26T10:24:02Z'), fellEntry(100, '2026-10-26T11:52:37Z'), fellEntry(104, ukAt), fellEntry(102, '2026-10-26T12:10:00Z'), fellEntry(103, '2026-10-26T12:20:00Z')];
-  for (const [ukAt, route] of [['2026-10-26T11:52:37Z', null], ['2026-10-26T11:53:30Z', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']]) {
+  for (const [ukAt, route] of [['2026-10-26T11:52:37Z', null], ['2026-10-26T11:53:30Z', 'then United Kingdom 13:00, Canada 13:15, Hawaii 13:30, Mexico 13:45 TCT']]) {
     const env = device({ torn: allBeaten('Awoken in Mexico'), tornstats: feed(ukAt) });
     env.now = at;
     env.store[KEY_STORE] = KEY;
     const w = env.tab().run();
     await env.advance(5 * SEC);
-    assert.deepEqual(maolNotes(w).filter((n) => n.startsWith('route ')), route ? [route] : [], ukAt);
+    assert.deepEqual(maolNotes(w).filter((n) => /^(route|then) /.test(n)), route ? [route] : [], ukAt);
   }
 });
 
@@ -1316,7 +1329,7 @@ test('M\'aol: for each flight, the stop on his route where it catches him soones
   assert.deepEqual(notes(w, 23), [
     'moves at :00 :15 :30 :45, here since 10:46 TCT',
     'next Cayman Islands about 11:00 TCT',
-    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+    'then United Kingdom 11:15, Canada 11:30, Hawaii 11:45, Mexico 12:00 TCT',
     'airstrip: fly to Cayman Islands, he\'s there 11:00-11:15 TCT',
     'BCT: fly to Mexico, he\'s there 10:45-11:00 TCT',
   ]);
@@ -1396,7 +1409,7 @@ test('M\'aol: a reading just after a quarter hour that still has him where he wa
   assert.deepEqual(notes(w, 23), [
     'moves at :00 :15 :30 :45, here since 10:46 TCT',
     'next Cayman Islands about 11:00 TCT',
-    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+    'then United Kingdom 11:15, Canada 11:30, Hawaii 11:45, Mexico 12:00 TCT',
     'airstrip: fly to Canada, he\'s there 11:30-11:45 TCT',
     'BCT: fly to Cayman Islands, he\'s there 11:00-11:15 TCT',
   ]);
@@ -1445,7 +1458,7 @@ test('M\'aol: when the shield drops while he is abroad, his stop counts from the
   await env.advance(5 * SEC);
   env.torn[103] = beaten(103, 'Hawaii');
   await env.advance(MIN - 5 * SEC);
-  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'next Hawaii about 11:00 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'next Hawaii about 11:00 TCT', 'then Mexico 11:15, Cayman Islands 11:30, United Kingdom 11:45, Canada 12:00 TCT']);
   // The 11:00 sweep still says Canada, but his 10:45-11:00 stop there is over: both flights
   // catch him in Mexico, 11:15-11:30 (BCT lands at 11:07, the airstrip at 11:17).
   await env.advance(13 * MIN);
@@ -1462,7 +1475,7 @@ test('M\'aol: a new device that finds him within reach shows where to fly at onc
   env.store[KEY_STORE] = KEY;
   const w = env.tab().run();
   await env.advance(5 * SEC);
-  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'next United Kingdom about 11:00 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'next United Kingdom about 11:00 TCT', 'then Canada 11:15, Hawaii 11:30, Mexico 11:45, Cayman Islands 12:00 TCT']);
   assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:15-11:30 TCT', 'BCT: fly to Canada, he\'s there 11:15-11:30 TCT']);
 });
 
@@ -1777,7 +1790,7 @@ test('a gap in the readings that could hide one of his stops starts his trail ag
   }
   // Seen with no gap in Canada, Hawaii, Mexico, the Cayman Islands and the UK: that is his
   // route, and Canada comes after the UK.
-  assert.ok(maolNotes(w).includes('route Canada > Hawaii > Mexico > Cayman Islands > United Kingdom'), JSON.stringify(maolNotes(w)));
+  assert.ok(maolNotes(w).some((n) => /^then Hawaii \d\d:\d\d, Mexico \d\d:\d\d, Cayman Islands \d\d:\d\d, United Kingdom \d\d:\d\d TCT$/.test(n)), JSON.stringify(maolNotes(w)));
   assert.match(maolNotes(w).find((n) => n.startsWith('next ')), /^next Canada/);
 });
 
@@ -1850,7 +1863,7 @@ test('one move seen among falls too close to put in order settles their order, e
   assert.deepEqual(maolNotes(caymanFirst.w), [
     'moves at :00 :15 :30 :45, here since 10:46 TCT',
     'next United Kingdom about 11:00 TCT',
-    'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
+    'then Canada 11:15, Hawaii 11:30, Mexico 11:45, Cayman Islands 12:00 TCT',
   ]);
   assert.equal(catchNotes(caymanFirst.w).length, 2);
 
@@ -1860,7 +1873,7 @@ test('one move seen among falls too close to put in order settles their order, e
   assert.deepEqual(maolNotes(ukFirst.w), [
     'moves at :00 :15 :30 :45, here since 10:46 TCT',
     'next Canada about 11:00 TCT',
-    'route Mexico > United Kingdom > Cayman Islands > Canada > Hawaii',
+    'then Hawaii 11:15, Mexico 11:30, United Kingdom 11:45, Cayman Islands 12:00 TCT',
   ]);
 });
 
@@ -1883,7 +1896,7 @@ test('a move that fits no order the falls allow: no next stop and no route until
   assert.deepEqual(maolNotes(w), [
     'moves at :00 :15 :30 :45, here since 10:46 TCT',
     'next Hawaii about 11:00 TCT',
-    'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii',
+    'then Canada 11:15, Cayman Islands 11:30, United Kingdom 11:45, Mexico 12:00 TCT',
   ]);
   // The falls have Hawaii after Mexico, but he goes on to Canada.
   await go(env, ['Canada']);
@@ -1892,7 +1905,7 @@ test('a move that fits no order the falls allow: no next stop and no route until
   assert.deepEqual(maolNotes(w), [
     'moves at :00 :15 :30 :45, here since 10:50 TCT',
     'next Mexico about 11:00 TCT',
-    'route Mexico > Canada > Hawaii > Cayman Islands > United Kingdom',
+    'then Canada 11:15, Hawaii 11:30, Cayman Islands 11:45, United Kingdom 12:00 TCT',
   ]);
 });
 
