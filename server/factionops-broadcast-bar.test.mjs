@@ -97,3 +97,21 @@ test("no log() or warn() in the bar's every-page functions", () => {
     assert.doesNotMatch(fn(name), /\b(log|warn)\(/, name);
   }
 });
+
+// The war page's 📣 replaces the overlay's Shout box, every piece of it.
+test("the overlay's Shout box is gone", () => {
+  for (const name of ['fo-input-broadcast', 'fo-btn-send-broadcast', 'setupShoutDelegation', 'sendShoutAction',
+    'fo-broadcast-entry-bar']) {
+    assert.equal(SRC.includes(name), false, name);
+  }
+});
+
+test("the box's text is trimmed and every run of spaces is one", () => {
+  const bcastClean = new Function(fn('bcastClean') + '\nreturn bcastClean;')();
+  assert.equal(bcastClean('  Hold   hits \n now '), 'Hold hits now');
+  assert.equal(bcastClean('Let chain die'), 'Let chain die');
+  assert.equal(bcastClean(' \n\t '), '');
+  assert.equal(bcastClean(null), '');
+  assert.equal(bcastClean(undefined), '');
+  assert.equal(bcastClean(42), '42');
+});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FactionOps™ - Faction War Coordinator
 // @namespace    https://tornwar.com
-// @version      5.6.34
+// @version      5.6.35
 // @description  Real-time faction war coordination tool for Torn.com
 // @author       RussianRob
 // @license      All Rights Reserved — FactionOps™ name and logo are unregistered trademarks of RussianRob; brand use requires permission
@@ -103,7 +103,7 @@
     // Keep in step with @version above -- this is the number the footer shows
 // AND the one sent as scriptVersion, which the server's minimum-version
 // gate parses. Strictly numeric: a suffix would break that comparison.
-    const SCRIPT_VERSION = '5.6.34';
+    const SCRIPT_VERSION = '5.6.35';
     const CHAIN_POLL_ONLY = true;
     const CONFIG = {
         VERSION: SCRIPT_VERSION,
@@ -1538,6 +1538,65 @@ html.wb-theme-light {
 .fo-wp-rt.is-sse { border-color: rgba(0,184,148,.6); color: #00b894; background: rgba(0,184,148,.14); }
 .fo-wp-rt.is-poll { border-color: rgba(253,203,110,.5); color: #fdcb6e; background: rgba(253,203,110,.12); }
 .fo-wp-rt:hover { filter: brightness(1.25); }
+/* The war page's 📣, after the gear, for the faction's broadcast roles. */
+.fo-wp-bcast {
+    margin-left: 6px; height: 28px; padding: 0 9px; cursor: pointer;
+    border: 1px solid rgba(225,112,85,.55); border-radius: 3px;
+    background: rgba(225,112,85,.16); color: #ffb59b;
+    font: 700 11px/1 Arial, sans-serif; white-space: nowrap;
+}
+.fo-wp-bcast:hover { background: rgba(225,112,85,.28); }
+/* The box it opens: over the page and centred, a phone's width at most. */
+.fo-bc-scrim {
+    position: fixed; inset: 0; z-index: 2147483646;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.58);
+}
+.fo-bc-card {
+    width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+    overflow-y: auto; box-sizing: border-box; padding: 16px;
+    border: 1px solid rgba(225,112,85,.45); border-radius: 10px;
+    background: #202020; color: #d9d9d9; box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    font: 400 13px/1.4 Arial, sans-serif; text-align: left;
+}
+.fo-bc-title { font: 700 18px/1.2 Arial, sans-serif; color: #ff9a72; }
+.fo-bc-sub { margin: 4px 0 12px; color: #8d8d8d; }
+.fo-bc-picks { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.fo-bc-pick {
+    display: inline-flex; align-items: stretch; overflow: hidden;
+    border: 1px solid rgba(225,112,85,.45); border-radius: 999px; background: #171310;
+}
+.fo-bc-pick.is-on { background: #e17055; border-color: #e17055; }
+.fo-bc-pick button {
+    border: 0; background: none; color: #ffd9c9; cursor: pointer;
+    font: 700 13px/1 Arial, sans-serif;
+}
+.fo-bc-pick.is-on button { color: #1b1b1b; }
+.fo-bc-pick-text { padding: 9px 4px 9px 12px; }
+.fo-bc-pick-x { padding: 9px 11px 9px 7px; opacity: .75; }
+.fo-bc-add {
+    min-width: 36px; height: 33px; cursor: pointer;
+    border: 1px dashed rgba(225,112,85,.6); border-radius: 999px;
+    background: none; color: #ff9a72; font: 700 17px/1 Arial, sans-serif;
+}
+/* 16 px: anything smaller and iOS zooms the page in on focus. */
+.fo-bc-text {
+    display: block; width: 100%; min-height: 72px; box-sizing: border-box; resize: vertical;
+    padding: 10px; border: 1px solid rgba(225,112,85,.35); border-radius: 6px;
+    background: #151515; color: #fff; font: 400 16px/1.35 Arial, sans-serif;
+}
+.fo-bc-text:focus { outline: none; border-color: rgba(225,112,85,.8); }
+.fo-bc-row { display: flex; gap: 10px; margin: 4px 0 12px; font-size: 12px; }
+.fo-bc-note { color: #ffb59b; }
+.fo-bc-count { margin-left: auto; color: #8d8d8d; font-variant-numeric: tabular-nums; }
+.fo-bc-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.fo-bc-actions button {
+    height: 38px; padding: 0 16px; border-radius: 6px; cursor: pointer;
+    font: 700 14px/1 Arial, sans-serif;
+}
+.fo-bc-cancel { border: 1px solid #444; background: none; color: #ddd; }
+.fo-bc-send { border: 0; background: #e17055; color: #1b1b1b; }
+.fo-bc-send:disabled { opacity: .6; cursor: default; }
 .fo-wp-filter-count.is-on { color: #ffd166; }
 .fo-wp-call.fo-wp-call-taken {
     border-color: rgba(225,112,85,.45); background: #171310;
@@ -2152,10 +2211,10 @@ body.wb-chain-active {
     pointer-events: auto !important;
     touch-action: manipulation;
     isolation: isolate;
-    /* Above .fo-broadcast-entry-bar (z-index:10): isolation seals this chip's
-       stacking context, so the absolutely-positioned detail tooltip inside it
-       can't rise on its own z-index — lifting the whole chip is what puts the
-       tooltip over the Shout bar on narrow leader layouts (was hidden behind). */
+    /* isolation seals this chip's stacking context, so the absolutely-
+       positioned detail tooltip inside it can't rise on its own z-index:
+       lifting the whole chip is what keeps the tooltip over the overlay's
+       sections under the header on narrow layouts. */
     z-index: 20;
 }
 .fo-war-timer-icon { font-size: 12px; }
@@ -3765,38 +3824,6 @@ body.wb-chain-active {
 }
 @keyframes fo-tooltip-fade { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }
 
-/* Broadcast entry bar */
-.fo-broadcast-entry-bar {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 16px; background: var(--wb-bg-secondary);
-    border-bottom: 1px solid var(--wb-border);
-    /* Create a new stacking context above anything Torn's React might
-       layer into #mainContainer after we nested the overlay inside it. */
-    position: relative;
-    z-index: 10;
-    pointer-events: auto;
-    isolation: isolate;
-}
-.fo-broadcast-entry-bar input {
-    flex: 1; background: var(--wb-bg); border: 1px solid var(--wb-border);
-    color: var(--wb-text); padding: 5px 12px; border-radius: 4px; font-size: 13px;
-    box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
-    position: relative; z-index: 1;
-    pointer-events: auto !important;
-}
-.fo-broadcast-entry-bar button {
-    background: var(--wb-hospital-red); color: white; border: none;
-    padding: 5px 16px; border-radius: 4px; cursor: pointer;
-    font-size: 12px; font-weight: 700; text-transform: uppercase;
-    transition: all 0.2s ease;
-    position: relative; z-index: 2;
-    pointer-events: auto !important;
-    touch-action: manipulation;
-}
-.fo-broadcast-entry-bar button:hover {
-    filter: brightness(1.2); transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(214,48,49,0.3);
-}
 `;
         GM_addStyle(css);
         log('Styles injected');
@@ -3882,7 +3909,7 @@ body.wb-chain-active {
         // reported faction-member dashboards (Option B cooldown panel).
         memberBars: {},
 
-        // Faction-configured roles allowed to Shout + view Cooldowns. Null
+        // Faction-configured roles allowed to broadcast + view Cooldowns. Null
         // until fetched from /api/broadcast/roles on auth; isLeader() falls
         // back to the hardcoded default set when null.
         allowedBroadcastRoles: null,
@@ -7403,7 +7430,7 @@ body.wb-chain-active {
                         try { selfCheckGenocide(Date.now()); } catch (_) {}
 
                         // Fetch faction's custom broadcast roles so
-                        // isLeader() gates Shout + Cooldowns the same way
+                        // isLeader() gates the 📣 + Cooldowns the same way
                         // the server does. Best-effort — on failure we
                         // keep using the hardcoded defaults.
                         getAction('/api/broadcast/roles').then(resp => {
@@ -8380,14 +8407,6 @@ body.wb-chain-active {
         log('[war-timer] document delegation installed');
     }
 
-    /**
-     * Document-level delegation for the Shout button + its Enter-key
-     * handler. Runs once at script startup and never goes stale — the
-     * overlay can be destroyed, recreated, moved inside #mainContainer,
-     * or clobbered by Torn's React reconciliation without breaking the
-     * click flow. Capture-phase so we beat any parent handler that might
-     * call stopImmediatePropagation.
-     */
     function setupLogoMinimizeDelegation() {
         if (window.__foLogoDelegated) return;
         window.__foLogoDelegated = true;
@@ -8401,65 +8420,6 @@ body.wb-chain-active {
         }, true);
 
         log('[logo] document delegation installed');
-    }
-
-    function setupShoutDelegation() {
-        if (window.__foShoutDelegated) return;
-        window.__foShoutDelegated = true;
-
-        document.addEventListener('click', (e) => {
-            const btn = e.target && e.target.closest && e.target.closest('#fo-btn-send-broadcast');
-            if (!btn) return;
-            e.preventDefault();
-            e.stopPropagation();
-            sendShoutAction();
-        }, true);
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') return;
-            const inp = e.target && e.target.closest && e.target.closest('#fo-input-broadcast');
-            if (!inp) return;
-            e.preventDefault();
-            sendShoutAction();
-        }, true);
-
-        log('[shout] document delegation installed');
-    }
-
-    function sendShoutAction() {
-        log('[shout] action fired');
-        const msgInput = document.getElementById('fo-input-broadcast');
-        if (!msgInput) {
-            showToast('Broadcast input not found', 'error');
-            return;
-        }
-        const msg = msgInput.value.trim();
-        log('[shout] msg length:', msg.length);
-        if (!msg) {
-            showToast('Type something to broadcast first', 'warning');
-            return;
-        }
-        const currentWarId = deriveWarId();
-        log('[shout] warId:', currentWarId, 'myFactionId:', state.myFactionId);
-        if (!currentWarId) {
-            showToast('Error: Could not determine war ID.', 'error');
-            return;
-        }
-        log('[shout] POSTing /api/broadcast');
-        postAction('/api/broadcast', { message: msg, type: 'warning', warId: currentWarId })
-            .then(data => {
-                log('[shout] response:', data);
-                if (data && data.success) {
-                    msgInput.value = '';
-                    showToast('Broadcast sent to faction!', 'success');
-                } else {
-                    showToast((data && data.error) || 'Failed to send broadcast.', 'error');
-                }
-            })
-            .catch(e => {
-                warn('[shout] POST failed:', e && e.message);
-                showToast(`Broadcast failed: ${(e && e.message) || 'server error'}`, 'error');
-            });
     }
 
     /**
@@ -8498,7 +8458,7 @@ body.wb-chain-active {
         const pos = (state.myFactionPosition || '').toLowerCase();
         // Prefer server-configured roles when we've fetched them (so a faction
         // that added e.g. "warmaster" to broadcastRoles sees the same set
-        // gate both Shout and Cooldowns). Fall back to the built-in defaults
+        // gate both the 📣 and Cooldowns). Fall back to the built-in defaults
         // if we haven't heard from the server yet.
         const serverRoles = Array.isArray(state.allowedBroadcastRoles) && state.allowedBroadcastRoles.length
             ? state.allowedBroadcastRoles.map(r => String(r).toLowerCase())
@@ -8774,8 +8734,8 @@ body.wb-chain-active {
                     <button class="wb-btn wb-btn-sm" id="wb-btn-save-roles">Save</button>
                 </div>
                 <div style="font-size:11px;opacity:0.6;margin-top:4px;">
-                    Faction positions counted as admins. Admins can use "Shout"
-                    and view post-war reports. <br>
+                    Faction positions counted as admins. Admins get 📣 Broadcast
+                    on the war page and view post-war reports. <br>
                     <span id="fo-enabled-roles-label">Loading enabled roles...<br></span>
                     <em>Note: Saving a list replaces the defaults. Clear and save to reset.</em>
                 </div>
@@ -11324,6 +11284,204 @@ body.wb-chain-active {
         }, 0);
     }
 
+    // The war page's 📣 Broadcast, after the gear, for the faction's broadcast
+    // roles only (isLeader: the roles set in the overlay's settings, and the
+    // owner). Checked on every pass, since the roles arrive from the server
+    // after the filter bar is first drawn. It opens the box below; what members
+    // see is the broadcast bar (SECTION 1A).
+    function syncWarBroadcastButton() {
+        const bar = document.getElementById('fo-wp-filter');
+        if (!bar) return;
+        let btn = document.getElementById('fo-wp-bcast');
+        if (!isLeader()) {
+            if (btn) btn.remove();
+            return;
+        }
+        if (btn) return;
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'fo-wp-bcast';
+        btn.className = 'fo-wp-bcast';
+        btn.textContent = '📣 Broadcast';
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            try { openBroadcastBox(); } catch (err) { log('[broadcast] ' + (err && err.message)); }
+        });
+        const gear = bar.querySelector('#fo-wp-settings');
+        bar.insertBefore(btn, gear ? gear.nextSibling : null);
+    }
+
+    // The box's text as it goes out: trimmed, every run of spaces and
+    // newlines as one space (the server does the same).
+    function bcastClean(s) {
+        return String(s == null ? '' : s).trim().replace(/\s+/g, ' ');
+    }
+
+    // The faction's quick picks as the server last answered, for the next
+    // time the box opens on this page.
+    let _bcastPicks = [];
+
+    // The 📣 box: the faction's quick picks with a + that saves what is typed,
+    // the message (150 characters, as the server allows), and Send.
+    function openBroadcastBox() {
+        if (document.getElementById('fo-bc-box')) return;
+        const box = document.createElement('div');
+        box.id = 'fo-bc-box';
+        box.className = 'fo-bc-scrim';
+        box.innerHTML =
+            '<div class="fo-bc-card" role="dialog" aria-modal="true" aria-label="Send to your faction">' +
+                '<div class="fo-bc-title">📣 Send to your faction</div>' +
+                '<div class="fo-bc-sub">Every member sees it at once, and anyone away gets a push.</div>' +
+                '<div class="fo-bc-picks" id="fo-bc-picks"></div>' +
+                '<textarea class="fo-bc-text" id="fo-bc-text" maxlength="150" rows="3" ' +
+                          'placeholder="Type a message…"></textarea>' +
+                '<div class="fo-bc-row"><span class="fo-bc-note" id="fo-bc-note"></span>' +
+                    '<span class="fo-bc-count" id="fo-bc-count">0/150</span></div>' +
+                '<div class="fo-bc-actions">' +
+                    '<button type="button" class="fo-bc-cancel" id="fo-bc-cancel">Cancel</button>' +
+                    '<button type="button" class="fo-bc-send" id="fo-bc-send">Send to all members</button>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(box);
+        // Not focused on open: on a phone the keyboard would come up over the
+        // quick picks, which are the quick way to send.
+        const text = box.querySelector('#fo-bc-text');
+        text.addEventListener('input', function () {
+            box.querySelector('#fo-bc-count').textContent = text.value.length + '/150';
+            markBroadcastPick(box);
+        });
+        // Enter sends; the bar shows one line, so there is nothing to break.
+        text.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendBroadcastFromBox(box);
+            }
+        });
+        box.querySelector('#fo-bc-cancel').addEventListener('click', closeBroadcastBox);
+        box.querySelector('#fo-bc-send').addEventListener('click', function () { sendBroadcastFromBox(box); });
+        // A tap on the dimmed page closes it; one on the card does not. Torn's
+        // page underneath gets neither.
+        box.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (e.target === box) closeBroadcastBox();
+        });
+        document.addEventListener('keydown', broadcastBoxEscape, true);
+        renderBroadcastPicks(box, _bcastPicks);
+        getAction('/api/broadcast/picks').then(function (resp) {
+            if (resp && Array.isArray(resp.picks)) {
+                _bcastPicks = resp.picks;
+                renderBroadcastPicks(box, _bcastPicks);
+            }
+        }).catch(function () {});
+    }
+
+    function broadcastBoxEscape(e) {
+        if (e.key === 'Escape') closeBroadcastBox();
+    }
+
+    function closeBroadcastBox() {
+        const box = document.getElementById('fo-bc-box');
+        if (box) box.remove();
+        document.removeEventListener('keydown', broadcastBoxEscape, true);
+    }
+
+    // The picks row: each pick fills the message, its × takes it off the
+    // faction's list, and the + at the end saves what is typed. Built from
+    // text only: admins type the picks.
+    function renderBroadcastPicks(box, picks) {
+        const row = box.querySelector('#fo-bc-picks');
+        if (!row) return;
+        row.textContent = '';
+        for (const pick of picks) {
+            const chip = document.createElement('span');
+            chip.className = 'fo-bc-pick';
+            chip.dataset.pick = pick;
+            const use = document.createElement('button');
+            use.type = 'button';
+            use.className = 'fo-bc-pick-text';
+            use.textContent = pick;
+            use.addEventListener('click', function () {
+                const text = box.querySelector('#fo-bc-text');
+                text.value = pick;
+                text.dispatchEvent(new Event('input'));
+            });
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'fo-bc-pick-x';
+            x.setAttribute('aria-label', 'Remove');
+            x.textContent = '×';
+            x.addEventListener('click', function () { changeBroadcastPicks(box, { remove: pick }); });
+            chip.append(use, x);
+            row.appendChild(chip);
+        }
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'fo-bc-add';
+        add.setAttribute('aria-label', 'Save as a quick pick');
+        add.textContent = '+';
+        add.addEventListener('click', function () {
+            const t = bcastClean(box.querySelector('#fo-bc-text').value);
+            const note = box.querySelector('#fo-bc-note');
+            if (!t) { note.textContent = 'Type a message, then + saves it.'; return; }
+            if (picks.some(function (p) { return p.toLowerCase() === t.toLowerCase(); })) {
+                note.textContent = 'Already a quick pick.';
+                return;
+            }
+            changeBroadcastPicks(box, { add: t });
+        });
+        row.appendChild(add);
+        markBroadcastPick(box);
+    }
+
+    // The pick that matches the message, marked.
+    function markBroadcastPick(box) {
+        const v = bcastClean(box.querySelector('#fo-bc-text').value);
+        box.querySelectorAll('.fo-bc-pick').forEach(function (chip) {
+            chip.classList.toggle('is-on', !!v && chip.dataset.pick === v);
+        });
+    }
+
+    // + or ×, through the server: the faction's list is shared by every
+    // admin, so the row is redrawn from the list the server answers.
+    function changeBroadcastPicks(box, change) {
+        const note = box.querySelector('#fo-bc-note');
+        note.textContent = '';
+        postAction('/api/broadcast/picks', change).then(function (resp) {
+            if (resp && Array.isArray(resp.picks)) {
+                _bcastPicks = resp.picks;
+                renderBroadcastPicks(box, _bcastPicks);
+            }
+        }).catch(function (e) {
+            note.textContent = (e && e.message) || 'The quick picks did not save.';
+        });
+    }
+
+    function sendBroadcastFromBox(box) {
+        const text = box.querySelector('#fo-bc-text');
+        const note = box.querySelector('#fo-bc-note');
+        const send = box.querySelector('#fo-bc-send');
+        if (send.disabled) return;
+        const message = bcastClean(text.value);
+        if (!message) { note.textContent = 'Type a message first.'; return; }
+        const warId = deriveWarId();
+        if (!warId) { note.textContent = 'FactionOps has not signed in yet.'; return; }
+        note.textContent = '';
+        send.disabled = true;
+        send.textContent = 'Sending…';
+        postAction('/api/broadcast', { message: message, type: 'warning', warId: warId }).then(function (data) {
+            if (!data || !data.success) throw new Error((data && data.error) || 'The broadcast did not go out.');
+            closeBroadcastBox();
+            // Not '📣 …': showToast's 📣 branch cuts the emoji in half.
+            showToast('Sent to your faction', 'success');
+        }).catch(function (e) {
+            // The box and the message stay, so it can go again.
+            send.disabled = false;
+            send.textContent = 'Send to all members';
+            note.textContent = (e && e.message) || 'The broadcast did not go out.';
+        });
+    }
+
     // The server told us this faction may not use FactionOps.
     //
     // startCallsOnlyMode draws the row furniture BEFORE authenticating, on
@@ -11340,6 +11498,7 @@ body.wb-chain-active {
         try {
             const bar = document.getElementById('fo-wp-filter');
             if (bar) bar.remove();
+            closeBroadcastBox();
             document.querySelectorAll('.fo-wp-call').forEach(function (b) { b.remove(); });
             document.querySelectorAll('.fo-call-host').forEach(function (c) { c.classList.remove('fo-call-host'); });
             document.querySelectorAll('.fo-called-row').forEach(function (r) {
@@ -11375,6 +11534,7 @@ body.wb-chain-active {
         let rows;
         try { rows = findMemberRows(); } catch (_) { return; }
         try { ensureWarFilterBar(); } catch (_) {}
+        try { syncWarBroadcastButton(); } catch (_) {}
         try { setupTransportChip(); } catch (_) {}
         let hidden = 0, total = 0;
         // Sorted at the end of this 5s pass, never on the 1s tick: a row that
@@ -12561,10 +12721,6 @@ body.wb-chain-active {
             </div>
             <div class="fo-turtle-bar" id="fo-turtle-bar"></div>
             ${isLeader() ? `
-            <div class="fo-broadcast-entry-bar">
-                <input type="text" id="fo-input-broadcast" placeholder="Broadcast message to faction..." maxlength="150">
-                <button type="button" id="fo-btn-send-broadcast">Shout</button>
-            </div>
             <div class="fo-bars-section" id="fo-bars-section">
                 <div class="fo-bars-header" id="fo-bars-toggle">
                     <span class="fo-bars-caret">\u25B6</span>
@@ -12884,66 +13040,6 @@ body.wb-chain-active {
         if (typeof refreshTurtleBar === 'function') {
             refreshTurtleBar();
             // 90s refresh removed 2026-09-04 -- populates once on open.
-        }
-
-        // Wire up broadcast button in overlay (leader/banker only)
-        const shoutBtn = document.getElementById('fo-btn-send-broadcast');
-        log('[shout-wire] button in DOM?', !!shoutBtn);
-        if (shoutBtn) {
-            // Visual diagnostic — if you mousedown/touchstart this button and
-            // nothing flashes, the button isn't receiving input events.
-            const flashDiag = () => {
-                const prev = shoutBtn.style.background;
-                shoutBtn.style.background = '#fdcb6e';
-                setTimeout(() => { shoutBtn.style.background = prev; }, 250);
-            };
-            shoutBtn.addEventListener('mousedown', flashDiag, true);
-            shoutBtn.addEventListener('touchstart', flashDiag, true);
-            shoutBtn.addEventListener('pointerdown', flashDiag, true);
-
-            const sendShout = () => {
-                log('[shout] click fired');
-                const msgInput = document.getElementById('fo-input-broadcast');
-                if (!msgInput) {
-                    log('[shout] input element missing');
-                    showToast('Broadcast input not found', 'error');
-                    return;
-                }
-                const msg = msgInput.value.trim();
-                log('[shout] msg length:', msg.length);
-                if (!msg) {
-                    showToast('Type something to broadcast first', 'warning');
-                    return;
-                }
-                const currentWarId = deriveWarId();
-                log('[shout] warId:', currentWarId, 'myFactionId:', state.myFactionId);
-                if (!currentWarId) {
-                    showToast('Error: Could not determine war ID.', 'error');
-                    return;
-                }
-                log('[shout] POSTing /api/broadcast');
-                postAction('/api/broadcast', { message: msg, type: 'warning', warId: currentWarId })
-                .then(data => {
-                    log('[shout] response:', data);
-                    if (data && data.success) {
-                        msgInput.value = '';
-                        showToast('Broadcast sent to faction!', 'success');
-                    } else {
-                        showToast((data && data.error) || 'Failed to send broadcast.', 'error');
-                    }
-                })
-                .catch(e => {
-                    warn('[shout] POST failed:', e && e.message);
-                    showToast(`Broadcast failed: ${(e && e.message) || 'server error'}`, 'error');
-                });
-            };
-            shoutBtn.addEventListener('click', sendShout);
-            const msgInput = document.getElementById('fo-input-broadcast');
-            if (msgInput) {
-                msgInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') sendShout();
-                });
-            }
         }
 
         log('War overlay initialised');
@@ -17284,14 +17380,9 @@ body.wb-chain-active {
         installXHRInterceptor();
 
         // 6b. Seed state from cached JWT so features that depend on
-        //     identity (isLeader → Shout button, myPlayerId checks, etc.)
+        //     identity (isLeader → the 📣, myPlayerId checks, etc.)
         //     still work if the upcoming re-auth gets 429'd by Torn.
         hydrateStateFromJwt();
-
-        // 6c. Install Shout delegation at document level — immune to
-        //     overlay rebuilds, React reconciliation, or clobbered
-        //     per-element listeners.
-        setupShoutDelegation();
 
         // 6d. Watch for Torn's native mini profile card and inject a
         //     Retal action button into it.

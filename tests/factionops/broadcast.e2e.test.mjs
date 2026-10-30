@@ -245,7 +245,9 @@ await t("the message is text, never markup", async () => {
 const SENT = `{ message: "Let chain die", type: "warning", senderName: "Tester", senderId: "1000001", senderRole: "leader", ts: Date.now() - 1000 }`;
 
 // The war page's server, stubbed: the sign-in answers as a member of faction
-// 1000003 in position cfg.pos; the roles and the picks answer; the first
+// 1000003 in position cfg.pos; the roles and the picks answer (a 13th pick
+// is refused, as the server does), and the send answers cfg.send after
+// cfg.sendDelay ms; the first
 // long-poll answers with the war and the second with cfg.lp's broadcasts,
 // later ones hang; every short poll answers with cfg.poll's; with cfg.stream,
 // the stream starts and carries one global_toast. POST bodies are kept, and
@@ -268,6 +270,7 @@ const warPreamble = (cfg) => `(() => {
     if (url.includes("/api/broadcast/picks")) {
       if (method === "POST") {
         const q = JSON.parse(data || "{}");
+        if (typeof q.add === "string" && window.__picks.length >= 12) return { status: 400, body: { error: "Up to 12 quick picks: remove one first." } };
         if (typeof q.add === "string") window.__picks = window.__picks.concat([q.add]);
         if (typeof q.remove === "string") window.__picks = window.__picks.filter((x) => x !== q.remove);
       }
@@ -302,7 +305,8 @@ const warPreamble = (cfg) => `(() => {
       return { abort() {} };
     }
     const r = reply(url, method, o.data);
-    if (r) setTimeout(() => o.onload({ status: r.status, responseText: JSON.stringify(r.body) }), 50);
+    const wait = url.endsWith("/api/broadcast") && cfg.sendDelay ? cfg.sendDelay : 50;
+    if (r) setTimeout(() => o.onload({ status: r.status, responseText: JSON.stringify(r.body) }), wait);
     return { abort() {} };
   };
 })();`;
@@ -373,6 +377,180 @@ await t("the same broadcast twice is one bar, and a tap holds against a later po
   assert.strictEqual(bars, 1);
   assert.ok(later > atTap, "no poll after the tap");
   assert.strictEqual(after, null, "a later poll brought it back");
+});
+
+// ---- The war page's 📣 and its box ----------------------------------------
+
+// The war page as a leader, once the 📣 is drawn.
+async function openLeader(cfg = {}) {
+  const w = await openWar(Object.assign({ pos: "Leader", wait: 1000 }, cfg));
+  await w.p.waitForSelector("#fo-wp-bcast", { timeout: 15000 });
+  return w;
+}
+// ...and the box open, its picks answered.
+async function openBox(cfg) {
+  const w = await openLeader(cfg);
+  await w.p.click("#fo-wp-bcast");
+  await w.p.waitForSelector("#fo-bc-box .fo-bc-add");
+  await w.p.waitForTimeout(300);
+  return w;
+}
+const picksRow = (p) => p.evaluate(() => [...document.querySelectorAll("#fo-bc-picks .fo-bc-pick-text")].map((e) => e.textContent));
+const posted = (p, end) => p.evaluate((x) => window.__posts.filter((q) => q.url.endsWith(x)).map((q) => q.body), end);
+const note = (p) => p.evaluate(() => document.getElementById("fo-bc-note").textContent);
+const HOLD = { message: "Hold hits", type: "warning", warId: "war_1000003" };
+
+await t("a leader gets 📣 Broadcast after ⚙, and a member gets none", async () => {
+  const lead = await openLeader();
+  // One more 5 s pass: drawn once, not once a pass.
+  await lead.p.waitForTimeout(5500);
+  const got = await lead.p.evaluate(() => {
+    const b = document.getElementById("fo-wp-bcast");
+    return { text: b.textContent, prev: b.previousElementSibling && b.previousElementSibling.id,
+      title: b.hasAttribute("title"), n: document.querySelectorAll("#fo-wp-bcast").length };
+  });
+  await lead.ctx.close();
+  const mem = await openWar({ pos: "Member", wait: 9000 });
+  const none = await mem.p.evaluate(() => ({ bar: !!document.getElementById("fo-wp-filter"), btn: document.querySelectorAll("#fo-wp-bcast").length }));
+  await mem.ctx.close();
+  assert.deepStrictEqual(got, { text: "\u{1F4E3} Broadcast", prev: "fo-wp-settings", title: false, n: 1 });
+  assert.deepStrictEqual(none, { bar: true, btn: 0 });
+});
+
+await t("the box: the faction's quick picks and a +; a pick fills the message and counts it", async () => {
+  const { ctx, p } = await openBox();
+  const before = await p.evaluate(() => ({
+    title: document.querySelector("#fo-bc-box .fo-bc-title").textContent,
+    count: document.getElementById("fo-bc-count").textContent,
+    add: [...document.querySelectorAll("#fo-bc-picks .fo-bc-add")].map((e) => e.textContent),
+    max: document.getElementById("fo-bc-text").getAttribute("maxlength"),
+  }));
+  const picks = await picksRow(p);
+  await p.click("#fo-bc-picks .fo-bc-pick-text >> nth=0");
+  const after = await p.evaluate(() => ({
+    value: document.getElementById("fo-bc-text").value,
+    count: document.getElementById("fo-bc-count").textContent,
+    on: [...document.querySelectorAll("#fo-bc-picks .fo-bc-pick.is-on")].map((e) => e.dataset.pick),
+  }));
+  await ctx.close();
+  assert.deepStrictEqual(before, { title: "\u{1F4E3} Send to your faction", count: "0/150", add: ["+"], max: "150" });
+  assert.deepStrictEqual(picks, ["Let chain die", "Good work all!"]);
+  assert.deepStrictEqual(after, { value: "Let chain die", count: "13/150", on: ["Let chain die"] });
+});
+
+await t("+ saves what is typed and × removes a pick, and the list follows the server", async () => {
+  const { ctx, p } = await openBox();
+  // Another admin's pick, saved since the box opened.
+  await p.evaluate(() => { window.__picks = window.__picks.concat(["Hit now"]); });
+  await p.fill("#fo-bc-text", "  Push   now ");
+  await p.click("#fo-bc-picks .fo-bc-add");
+  await p.waitForTimeout(400);
+  const added = await picksRow(p);
+  await p.click('#fo-bc-picks .fo-bc-pick[data-pick="Good work all!"] .fo-bc-pick-x');
+  await p.waitForTimeout(400);
+  const removed = await picksRow(p), sent = await posted(p, "/api/broadcast/picks");
+  await ctx.close();
+  assert.deepStrictEqual(sent, [{ add: "Push now" }, { remove: "Good work all!" }]);
+  assert.deepStrictEqual(added, ["Let chain die", "Good work all!", "Hit now", "Push now"]);
+  assert.deepStrictEqual(removed, ["Let chain die", "Hit now", "Push now"]);
+});
+
+await t("+ with nothing typed, or a pick already there, says so and sends nothing", async () => {
+  const { ctx, p } = await openBox();
+  await p.fill("#fo-bc-text", "   ");
+  await p.click("#fo-bc-picks .fo-bc-add");
+  const empty = await note(p);
+  await p.fill("#fo-bc-text", "let  CHAIN die");
+  await p.click("#fo-bc-picks .fo-bc-add");
+  const dup = await note(p);
+  await p.waitForTimeout(300);
+  const sent = await posted(p, "/api/broadcast/picks");
+  await ctx.close();
+  assert.strictEqual(empty, "Type a message, then + saves it.");
+  assert.strictEqual(dup, "Already a quick pick.");
+  assert.deepStrictEqual(sent, []);
+});
+
+await t("a 13th pick: the server's answer shows under the message, and the row stays", async () => {
+  const twelve = Array.from({ length: 12 }, (_, i) => "Pick " + (i + 1));
+  const { ctx, p } = await openBox({ picks: twelve });
+  await p.fill("#fo-bc-text", "Push now");
+  await p.click("#fo-bc-picks .fo-bc-add");
+  await p.waitForTimeout(400);
+  const said = await note(p), row = await picksRow(p);
+  await ctx.close();
+  assert.strictEqual(said, "Up to 12 quick picks: remove one first.");
+  assert.deepStrictEqual(row, twelve);
+});
+
+await t("Send to all members posts the message to the faction's war, closes the box and says it went", async () => {
+  const { ctx, p } = await openBox();
+  await p.fill("#fo-bc-text", "Hold hits");
+  await p.click("#fo-bc-send");
+  await p.waitForTimeout(500);
+  const sent = await posted(p, "/api/broadcast");
+  const box = await p.evaluate(() => !!document.getElementById("fo-bc-box"));
+  // Every node's text, whole: no half of an emoji.
+  const said = await p.evaluate(() => window.__said.filter((s) => s.includes("Sent to your faction")).map((s) => s.isWellFormed()));
+  await ctx.close();
+  assert.deepStrictEqual(sent, [HOLD]);
+  assert.strictEqual(box, false);
+  assert.ok(said.length > 0, "no toast");
+  assert.ok(said.every(Boolean), "a toast with half an emoji");
+});
+
+await t("Enter sends and Shift+Enter does not; while it goes it reads Sending… and a second Enter sends nothing", async () => {
+  const { ctx, p } = await openBox({ sendDelay: 1500 });
+  await p.fill("#fo-bc-text", "Hold hits");
+  await p.focus("#fo-bc-text");
+  await p.keyboard.press("Shift+Enter");
+  await p.waitForTimeout(200);
+  const afterShift = (await posted(p, "/api/broadcast")).length;
+  await p.keyboard.press("Enter");
+  await p.waitForTimeout(100);
+  const going = await p.evaluate(() => { const s = document.getElementById("fo-bc-send"); return { text: s.textContent, disabled: s.disabled }; });
+  await p.keyboard.press("Enter");
+  await p.waitForTimeout(2000);
+  const sent = await posted(p, "/api/broadcast");
+  await ctx.close();
+  assert.strictEqual(afterShift, 0);
+  assert.deepStrictEqual(going, { text: "Sending…", disabled: true });
+  assert.deepStrictEqual(sent, [HOLD]);
+});
+
+await t("a refused send keeps the box and the message, and says why", async () => {
+  const { ctx, p } = await openBox({ send: { status: 403, body: { error: "Only leaders and bankers can broadcast to the faction." } } });
+  await p.fill("#fo-bc-text", "Hold hits");
+  await p.click("#fo-bc-send");
+  await p.waitForTimeout(500);
+  const got = await p.evaluate(() => {
+    const s = document.getElementById("fo-bc-send");
+    return { box: !!document.getElementById("fo-bc-box"), value: document.getElementById("fo-bc-text").value,
+      note: document.getElementById("fo-bc-note").textContent, send: s.textContent, disabled: s.disabled };
+  });
+  await ctx.close();
+  assert.deepStrictEqual(got, { box: true, value: "Hold hits", note: "Only leaders and bankers can broadcast to the faction.",
+    send: "Send to all members", disabled: false });
+});
+
+await t("Cancel, a tap outside and Escape each close it", async () => {
+  const { ctx, p } = await openBox();
+  const up = () => p.evaluate(() => !!document.getElementById("fo-bc-box"));
+  await p.click("#fo-bc-cancel");
+  const cancel = await up();
+  await p.click("#fo-wp-bcast");
+  await p.waitForSelector("#fo-bc-box");
+  // A tap on the card itself keeps it.
+  await p.click("#fo-bc-box .fo-bc-title");
+  const card = await up();
+  await p.mouse.click(5, 5);
+  const outside = await up();
+  await p.click("#fo-wp-bcast");
+  await p.waitForSelector("#fo-bc-box");
+  await p.keyboard.press("Escape");
+  const esc = await up();
+  await ctx.close();
+  assert.deepStrictEqual({ cancel, card, outside, esc }, { cancel: false, card: true, outside: false, esc: false });
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

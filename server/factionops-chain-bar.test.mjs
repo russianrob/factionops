@@ -217,12 +217,12 @@ test('the text: the count with commas, the clock as m:ss', () => {
   assert.equal(L().chainBarText({ count: 12, left: 75 }), 'CHAIN DYING \u00B7 12 hits \u00B7 1:15 left');
 });
 
-test('5.6.34 in both places, the meta file is the header, and every page joins the old list', () => {
+test('5.6.35 in both places, the meta file is the header, and every page joins the old list', () => {
   const end = '// ==/UserScript==';
   const head = SRC.slice(0, SRC.indexOf(end) + end.length) + '\n';
   assert.equal(META, head);
-  assert.match(head, /^\/\/ @version\s+5\.6\.34$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.34';/);
+  assert.match(head, /^\/\/ @version\s+5\.6\.35$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '5\.6\.35';/);
   const matches = [...head.matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((m) => m[1]);
   assert.equal(matches.length, 11);
   assert.deepEqual(matches.slice(-2), ['https://www.torn.com/*', 'https://torn.com/*']);
