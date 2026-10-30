@@ -3818,10 +3818,10 @@ router.post("/api/broadcast", requireAuth, (req, res) => {
 
 // ── GET /api/broadcast/latest ───────────────────────────────────────────
 // The latest broadcast for the member's own faction's war while it is under
-// 10 minutes old, with its age (broadcast-bar.js). FactionOps asks once when
-// a Torn page loads, at most every 30 s, so a member on a page with no
-// connection when it went out still gets the bar. The war is the one the
-// sign-in names, never one the page sends.
+// 10 minutes old, with its age (broadcast-bar.js). FactionOps asks when a
+// Torn page loads and every 15 s after, one ask per 15 s across tabs, so a
+// member on a page with no connection still gets the bar. The war is the one
+// the sign-in names, never one the page sends.
 router.get("/api/broadcast/latest", requireAuth, (req, res) => {
   const { factionId, playerId } = req.user;
   const warId = `war_${factionId}`;

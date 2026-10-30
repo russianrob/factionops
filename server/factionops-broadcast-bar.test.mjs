@@ -93,7 +93,7 @@ test("its top: under Gym Coach's banner at the top, under the chain bar, else 10
 // pages forever: a log() there throws on whichever path reaches it.
 test("no log() or warn() in the bar's every-page functions", () => {
   for (const name of ['bcastRecord', 'bcastNewer', 'bcastText', 'bcastShows', 'bcastTop', 'readBcast',
-    'takeBroadcast', 'renderBroadcastBar', 'broadcastBarTick', 'checkBroadcastOnLoad', 'startBroadcastBar']) {
+    'takeBroadcast', 'renderBroadcastBar', 'broadcastBarTick', 'checkLatestBroadcast', 'startBroadcastBar']) {
     assert.doesNotMatch(fn(name), /\b(log|warn)\(/, name);
   }
 });

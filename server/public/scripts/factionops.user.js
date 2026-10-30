@@ -621,10 +621,11 @@
     // One record in GM storage drives it on every tab. FactionOps' own pages
     // write it the moment the stream or a poll brings a broadcast, and every
     // page draws from it once a second, so another tab shows it within a second
-    // and a tap anywhere takes it down everywhere. A page asks the server for
-    // the latest once when it loads, at most every 30 s across tabs and never
-    // without a sign-in, for a broadcast that went out while nothing on this
-    // device was connected. Nothing polls.
+    // and a tap anywhere takes it down everywhere. Every page also asks the
+    // server for the latest when it loads and every 15 s after, one ask per
+    // 15 s across tabs and never without a sign-in: only FactionOps' own pages
+    // have the stream or a poll, so on any other page that ask is how a
+    // broadcast gets here.
     //
     // Unlike the chain bar it takes taps, since a tap is how it goes, and it is
     // not tied to focus: what it shows comes from the server, not off the page.
@@ -634,8 +635,8 @@
     // 10 minutes from sending: the server's own hold (broadcast-bar.js).
     const BCAST_HOLD_MS = 600000;
     const BCAST_FLASH_MS = 10000;
-    // How often a page may ask for the latest, across tabs...
-    const BCAST_CHECK_EVERY_MS = 30000;
+    // How often this device asks for the latest, across tabs...
+    const BCAST_CHECK_EVERY_MS = 15000;
     // ...and how long a sign-in the server refuses stops the asking.
     const BCAST_CHECK_PAUSE_MS = 600000;
 
@@ -768,11 +769,12 @@
         renderBroadcastBar(bcastShows(rec, dismissed, now) ? rec : null, now);
     }
 
-    // The page-load ask, GET /api/broadcast/latest: at most every 30 s across
-    // tabs, only with the sign-in FactionOps stored, and 10 minutes' rest after
-    // the server refuses that sign-in. Its answer is the faction's latest
-    // broadcast while it is under 10 minutes old, with its age.
-    function checkBroadcastOnLoad() {
+    // The ask, GET /api/broadcast/latest: when a page loads and then on the
+    // bar's tick, at most every 15 s across tabs, only with the sign-in
+    // FactionOps stored, and 10 minutes' rest after the server refuses that
+    // sign-in. Before its time it is one GM read. Its answer is the faction's
+    // latest broadcast while it is under 10 minutes old, with its age.
+    function checkLatestBroadcast() {
         const jwt = GM_getValue('factionops_jwt', '');
         if (!jwt) return;
         const now = Date.now();
@@ -800,9 +802,12 @@
     function startBroadcastBar() {
         // Not in Torn's frames: one bar, on the page itself.
         if (window.top !== window.self) return;
-        try { checkBroadcastOnLoad(); } catch (_) {}
+        try { checkLatestBroadcast(); } catch (_) {}
         try { broadcastBarTick(); } catch (_) {}
-        setInterval(() => { try { broadcastBarTick(); } catch (_) {} }, 1000);
+        setInterval(() => {
+            try { checkLatestBroadcast(); } catch (_) {}
+            try { broadcastBarTick(); } catch (_) {}
+        }, 1000);
     }
 
     startChainBar();

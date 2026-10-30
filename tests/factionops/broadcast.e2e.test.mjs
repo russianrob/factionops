@@ -1,8 +1,8 @@
 // FactionOps' broadcast bar in a browser. On a Torn page that is not one of
 // FactionOps' own, a broadcast this device holds is up, flashing for 10 s,
 // then steady until a tap takes it down on every tab; signed in, the page asks
-// the server for the latest once when it loads, at most every 30 s, and rests
-// 10 minutes after a refusal; the bar sits under Gym Coach's banner and the
+// the server for the latest when it loads and every 15 s after, one ask per
+// 15 s across tabs, and rests 10 minutes after a refusal; the bar sits under Gym Coach's banner and the
 // chain bar, with FactionOps' toasts under it. On the war page, the stream,
 // the long-poll and the short poll each put it up at once. Ids, names and the
 // key are made up.
@@ -23,7 +23,8 @@ const ANSWER = { status: 200, body: { broadcast: { message: "Hold hits", type: "
 
 // What a userscript manager (or Torn PDA) would give the script, with GM
 // storage and the server stubbed. cfg.held puts REC (with cfg.rec over it) in
-// storage, held for that many ms more; cfg.latest answers the page-load ask;
+// storage, held for that many ms more; cfg.latest answers the asks for the
+// latest, or window.__latest once a test sets it;
 // the chain check gets a live chain. Every request is logged with the
 // sign-in it carries.
 const preamble = (cfg) => `(() => {
@@ -34,7 +35,7 @@ const preamble = (cfg) => `(() => {
   window.__reqs = [];
   const reply = (url) => {
     if (url.startsWith(${JSON.stringify(CHECK)})) return { status: 200, body: { chain: { current: 1234, max: 2500, timeout: 42, modifier: 1, cooldown: 0 } } };
-    if (url.endsWith(${JSON.stringify(LATEST)})) return cfg.latest || null;
+    if (url.endsWith(${JSON.stringify(LATEST)})) return window.__latest !== undefined ? window.__latest : (cfg.latest || null);
     return null;
   };
   const log = (url, headers, via) => window.__reqs.push({ url: String(url).replace(/key=[^&]*/, "key=K"), auth: (headers && headers.Authorization) || "", via });
@@ -137,7 +138,7 @@ await t("a dismissed or expired broadcast shows nothing and adds nothing to the 
   assert.deepStrictEqual(expired, []);
 });
 
-await t("signed in, the page asks once for the latest and puts it up; the next page within 30 s does not ask", async () => {
+await t("signed in, the page asks once for the latest and puts it up; the next page within 15 s does not ask", async () => {
   const one = await open({ cfg: { store: { factionops_jwt: "jwt-test" }, latest: ANSWER } });
   const first = await asks(one.p), shown = await bar(one.p), store = await kept(one.p);
   await one.ctx.close();
@@ -147,7 +148,7 @@ await t("signed in, the page asks once for the latest and puts it up; the next p
   assert.deepStrictEqual(first.map((q) => q.auth), ["Bearer jwt-test"]);
   assert.ok(shown, "no bar");
   assert.strictEqual(shown.text, "\u{1F4E3} Hold hits · Tester (leader)");
-  assert.deepStrictEqual(second, [], "asked again within 30 s");
+  assert.deepStrictEqual(second, [], "asked again within 15 s");
   assert.ok(still, "the next page lost the bar");
 });
 
@@ -169,6 +170,30 @@ await t("the same broadcast again after a tap stays down", async () => {
   const asked = await asks(two.p), got = await bar(two.p);
   await two.ctx.close();
   assert.strictEqual(asked.length, 1, "the second page did not ask");
+  assert.strictEqual(got, null, "a tapped broadcast came back");
+});
+
+const EMPTY = { status: 200, body: { broadcast: null } };
+
+await t("signed in, a broadcast sent while the page is open is up at the next check, 15 s on, with no reload", async () => {
+  const { ctx, p } = await open({ cfg: { store: { factionops_jwt: "jwt-test" }, latest: EMPTY } });
+  const before = await bar(p);
+  await p.evaluate((a) => { window.__latest = a; }, ANSWER);
+  await p.waitForTimeout(15000);
+  const after = await bar(p), asked = await asks(p);
+  await ctx.close();
+  assert.strictEqual(before, null);
+  assert.ok(after && after.text === "\u{1F4E3} Hold hits · Tester (leader)", JSON.stringify(after));
+  assert.strictEqual(asked.length, 2, "asks: " + asked.length);
+});
+
+await t("a tapped broadcast stays down when the next check brings it again", async () => {
+  const { ctx, p } = await open({ cfg: { store: { factionops_jwt: "jwt-test" }, latest: ANSWER } });
+  await p.click("#fo-bcast-bar");
+  await p.waitForTimeout(15000);
+  const got = await bar(p), asked = await asks(p);
+  await ctx.close();
+  assert.strictEqual(asked.length, 2, "asks: " + asked.length);
   assert.strictEqual(got, null, "a tapped broadcast came back");
 });
 
