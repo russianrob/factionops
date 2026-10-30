@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Ancient Ones
 // @namespace    RussianRob
-// @version      1.0.3
+// @version      1.0.4
 // @description  Where Torn's Halloween Ancient Ones are (M'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-ancient-ones.user.js
@@ -29,6 +29,9 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.4  - Reads TornStats' feed as it is served now (the six under npcs), so the
+//           beaten ones show their defeat times again, and with them M'aol's route so
+//           far, his route, next stop and where to fly.
 // v1.0.3  - While M'aol is shielded, his route so far shows as his praetorians fall:
 //           their countries in the order they fell, a slash between two that fell too
 //           close together to put in order. His next stop and where to fly count from
@@ -49,7 +52,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.3';
+  const VERSION = '1.0.4';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
