@@ -737,12 +737,12 @@ test('once all five are down, M\'aol can be hit: an Attack link, his country, an
   const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
   assert.equal(summary(w), 'M\'aol can be hit: in Mexico.');
   assert.equal(lineText(w, 23), 'M\'aol  Mexico  100%  Attack');
-  assert.deepEqual(notes(w, 23), ['moves about every 15 min']);
+  assert.deepEqual(notes(w, 23), ['moves at :00 :15 :30 :45']);
   env.torn[23] = up(23, 'Cayman Islands', 140000000);
   await env.advance(MIN);
   assert.equal(summary(w), 'M\'aol can be hit: in Cayman Islands.');
   assert.equal(lineText(w, 23), 'M\'aol  Cayman Islands  92%  Attack');
-  assert.deepEqual(notes(w, 23), ['moves about every 15 min, here since 10:41 TCT']);
+  assert.deepEqual(notes(w, 23), ['moves at :00 :15 :30 :45, here since 10:41 TCT']);
 });
 
 test('M\'aol can be hit only when all five are down, whatever his own words say', async () => {
@@ -927,10 +927,10 @@ const maolNotes = (w) => notes(w, 23).filter((n) => /^(moves|next|route) /.test(
 test('his route from his moves: once he has been seen in all five countries, in the order first seen', async () => {
   const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
   await go(env, ['Cayman Islands', 'United Kingdom', 'Cayman Islands', 'Canada']);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:44 TCT']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:44 TCT']);
   await go(env, ['Hawaii']);
   assert.deepEqual(maolNotes(w), [
-    'moves about every 15 min, here since 10:45 TCT',
+    'moves at :00 :15 :30 :45, here since 10:45 TCT',
     'next Mexico about 11:00 TCT',
     'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
   ]);
@@ -940,11 +940,11 @@ test('his route from his moves: once he has been seen in all five countries, in 
 test('his route from the falls: each timed by the script, at least 30 s apart', async () => {
   const { env, w } = await started({ torn: allUp() });
   await fall(env, [102, 100, 104, 101, 103]);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii'], 'no next stop from Torn City');
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii'], 'no next stop from Torn City');
   await go(env, ['Canada']);
   assert.deepEqual(maolNotes(w), [
-    'moves about every 15 min, here since 10:46 TCT',
-    'next Cayman Islands about 11:01 TCT',
+    'moves at :00 :15 :30 :45, here since 10:46 TCT',
+    'next Cayman Islands about 11:00 TCT',
     'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii',
   ]);
 });
@@ -955,31 +955,31 @@ test('no route from the falls when two came in one sweep, a country is missing, 
   one.env.torn[100] = beaten(100, 'Cayman Islands');
   await one.env.advance(MIN);
   await fall(one.env, [104, 101, 103]);
-  assert.deepEqual(maolNotes(one.w), ['moves about every 15 min']);
+  assert.deepEqual(maolNotes(one.w), ['moves at :00 :15 :30 :45']);
 
   const missing = await started({ torn: allUp() });
   await fall(missing.env, [102, 100, 104, 101]);
   missing.env.torn[103] = profile(103, 'Dormant', 0, { state: 'Abroad' });
   await missing.env.advance(MIN);
-  assert.deepEqual(maolNotes(missing.w), ['moves about every 15 min']);
+  assert.deepEqual(maolNotes(missing.w), ['moves at :00 :15 :30 :45']);
 
   const shared = await started({ torn: { ...allUp(), 103: up(103, 'Canada') } });
   await fall(shared.env, [102, 100, 104, 101]);
   shared.env.torn[103] = beaten(103, 'Canada');
   await shared.env.advance(MIN);
-  assert.deepEqual(maolNotes(shared.w), ['moves about every 15 min']);
+  assert.deepEqual(maolNotes(shared.w), ['moves at :00 :15 :30 :45']);
 });
 
 test('his moves beat the falls when they disagree', async () => {
   const { env, w } = await started({ torn: allUp() });
   await fall(env, [102, 100, 104, 101, 103]);
   await go(env, ['Mexico', 'Hawaii', 'Canada', 'Cayman Islands']);
-  assert.deepEqual(maolNotes(w).slice(1), ['next United Kingdom about 11:04 TCT', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii']);
+  assert.deepEqual(maolNotes(w).slice(1), ['next United Kingdom about 11:00 TCT', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii']);
   await go(env, ['United Kingdom']);
-  assert.deepEqual(maolNotes(w).slice(1), ['next Mexico about 11:05 TCT', 'route Mexico > Hawaii > Canada > Cayman Islands > United Kingdom']);
+  assert.deepEqual(maolNotes(w).slice(1), ['next Mexico about 11:00 TCT', 'route Mexico > Hawaii > Canada > Cayman Islands > United Kingdom']);
 });
 
-test('the next stop has no time when his arrival wasn\'t seen in time, and there is none from Torn City', async () => {
+test('the next stop is on the quarter hour even when his arrival wasn\'t seen in time, and there is none from Torn City', async () => {
   const { env, w } = await started({ torn: allBeaten('Awoken in Mexico') });
   await go(env, ['Cayman Islands', 'United Kingdom', 'Canada', 'Hawaii']);
   // Out of view for 4 minutes, while he moves on to Mexico.
@@ -988,10 +988,10 @@ test('the next stop has no time when his arrival wasn\'t seen in time, and there
   await env.advance(4 * MIN);
   w.show();
   await env.advance(0);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min', 'next Cayman Islands', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'next Cayman Islands about 11:00 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
   env.torn[23] = up(23, 'Torn City');
   await env.advance(MIN);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:49 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:49 TCT', 'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii']);
 });
 
 test('his moves while shielded don\'t count toward his route', async () => {
@@ -1007,6 +1007,33 @@ test('his moves while shielded don\'t count toward his route', async () => {
   env.torn[103] = beaten(103, 'Hawaii');
   await env.advance(MIN);
   assert.deepEqual(env.reading().trail, ['United Kingdom']);
+});
+
+test('while he is shielded, his route so far: the countries of the praetorians beaten so far, in the order they fell', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  assert.deepEqual(maolNotes(w), [], 'none fallen');
+  await fall(env, [102]);
+  assert.deepEqual(maolNotes(w), ['route so far Canada']);
+  await fall(env, [100, 104]);
+  assert.deepEqual(maolNotes(w), ['route so far Canada > Cayman Islands > United Kingdom']);
+  await fall(env, [101]);
+  assert.equal(lineText(w, 23), 'M\'aol  Torn City  100%  shielded, 1 praetorian up');
+  assert.deepEqual(maolNotes(w), ['route so far Canada > Cayman Islands > United Kingdom > Mexico']);
+  await fall(env, [103]);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45', 'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii'], 'once he can be hit, his route');
+});
+
+test('the route so far joins falls under 30 s apart with a slash, their order not known, and shows nothing while a fall has no time', async () => {
+  const { env, w } = await started({ torn: allUp() });
+  // Both in one sweep. Inside such a run the countries go in the praetorians' own order (100, then 102).
+  env.torn[102] = beaten(102, 'Canada');
+  env.torn[100] = beaten(100, 'Cayman Islands');
+  await env.advance(MIN);
+  await fall(env, [104]);
+  assert.deepEqual(maolNotes(w), ['route so far Cayman Islands/Canada > United Kingdom']);
+  // 11:25 TCT on Oct 26: Nol'dasaym was beaten before the script was watching, and TornStats has no time.
+  const untimed = await started({ torn: READ_1125 });
+  assert.deepEqual(maolNotes(untimed.w), []);
 });
 
 test('a new summoning empties his trail and TornStats\' times', async () => {
@@ -1272,19 +1299,23 @@ async function maolInMexico(lives = [151200000, 151200000]) {
 }
 const flyNotes = (w) => notes(w, 23).filter((n) => /^(airstrip|BCT|dies) /.test(n) || /^(airstrip|BCT):/.test(n));
 
-test('M\'aol: for each flight, the stop on his route where it catches him soonest', async () => {
+test('M\'aol: for each flight, the stop on his route where it catches him soonest, his stops on the quarter hours', async () => {
   const { env, w } = await maolInMexico();
+  // Seen in Mexico at 10:46: the 10:45-11:00 stop.
   assert.deepEqual(notes(w, 23), [
-    'moves about every 15 min, here since 10:46 TCT',
-    'next Cayman Islands about 11:01 TCT',
+    'moves at :00 :15 :30 :45, here since 10:46 TCT',
+    'next Cayman Islands about 11:00 TCT',
     'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
-    'airstrip: fly to Cayman Islands, he\'s there 11:01-11:16 TCT',
-    'BCT: fly to Mexico, he\'s there 10:46-11:01 TCT',
+    'airstrip: fly to Cayman Islands, he\'s there 11:00-11:15 TCT',
+    'BCT: fly to Mexico, he\'s there 10:45-11:00 TCT',
   ]);
-  await env.advance(6 * MIN);
-  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:31-11:46 TCT', 'BCT: fly to Mexico, he\'s there 10:46-11:01 TCT']);
+  // 10:51: the airstrip would land in the Cayman Islands at 11:14, under 2 minutes before he
+  // leaves. BCT lands in Mexico at 10:58, 2 minutes before: still in time.
+  await env.advance(5 * MIN);
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:30-11:45 TCT', 'BCT: fly to Mexico, he\'s there 10:45-11:00 TCT']);
+  // 10:52: BCT would land in Mexico at 10:59.
   await env.advance(MIN);
-  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:31-11:46 TCT', 'BCT: fly to Cayman Islands, he\'s there 11:01-11:16 TCT']);
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:30-11:45 TCT', 'BCT: fly to Cayman Islands, he\'s there 11:00-11:15 TCT']);
 });
 
 test('M\'aol: his own death estimate, and too late for a flight that catches him less than 2 minutes before it', async () => {
@@ -1293,7 +1324,7 @@ test('M\'aol: his own death estimate, and too late for a flight that catches him
   assert.deepEqual(flyNotes(fast.w), ['dies about 10:49 TCT', 'airstrip: too late', 'BCT: too late']);
   // 7M lost from 10:40 to 10:47, 13M left: dies at 11:00. BCT lands in Mexico at 10:54.
   const slow = await maolInMexico([20 * M, 16 * M, 13 * M]);
-  assert.deepEqual(flyNotes(slow.w), ['dies about 11:00 TCT', 'airstrip: too late', 'BCT: fly to Mexico, he\'s there 10:46-11:01 TCT']);
+  assert.deepEqual(flyNotes(slow.w), ['dies about 11:00 TCT', 'airstrip: too late', 'BCT: fly to Mexico, he\'s there 10:45-11:00 TCT']);
 });
 
 test('M\'aol: nothing on where to fly once he has stayed more than 17 minutes in one country', async () => {
@@ -1302,7 +1333,7 @@ test('M\'aol: nothing on where to fly once he has stayed more than 17 minutes in
   assert.equal(flyNotes(w).length, 2, 'seen there 17 minutes after he arrived');
   await env.advance(MIN);
   assert.deepEqual(flyNotes(w), []);
-  assert.deepEqual(notes(w, 23).slice(0, 2), ['moves about every 15 min, here since 10:46 TCT', 'next Cayman Islands about 11:01 TCT']);
+  assert.deepEqual(notes(w, 23).slice(0, 2), ['moves at :00 :15 :30 :45, here since 10:46 TCT', 'next Cayman Islands about 11:15 TCT']);
 });
 
 test('M\'aol: a stop that runs past midnight shows the date on its end', async () => {
@@ -1313,20 +1344,36 @@ test('M\'aol: a stop that runs past midnight shows the date on its end', async (
   await env.advance(0);
   await fall(env, [101, 100, 104, 102, 103]);
   await go(env, ['Mexico']);
-  assert.deepEqual(flyNotes(w), ['airstrip: fly to Cayman Islands, he\'s there 23:56-Oct 27 00:11 TCT', 'BCT: fly to Mexico, he\'s there 23:41-23:56 TCT']);
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 00:15-Oct 27 00:30 TCT', 'BCT: fly to Cayman Islands, he\'s there 23:45-Oct 27 00:00 TCT']);
 });
 
-test('M\'aol: nothing on where to fly without his route, or without a time for his arrival', async () => {
+test('M\'aol: nothing on where to fly without his route', async () => {
   const noRoute = await started({ torn: allBeaten('Awoken in Mexico') });
   await go(noRoute.env, ['Cayman Islands']);
   assert.deepEqual(flyNotes(noRoute.w), []);
+});
+
+test('M\'aol: where to fly shows even when his arrival wasn\'t seen in time, counted from the quarter hour', async () => {
   const { env, w } = await maolInMexico();
   w.hide();
   env.torn[23] = up(23, 'Cayman Islands');
   await env.advance(4 * MIN);
   w.show();
   await env.advance(0);
-  assert.deepEqual(flyNotes(w), []);
+  // Seen at 10:50 in the Cayman Islands, his arrival unseen: the 10:45-11:00 stop, so the UK is
+  // 11:00-11:15 and Canada 11:15-11:30.
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:15-11:30 TCT', 'BCT: fly to Canada, he\'s there 11:15-11:30 TCT']);
+});
+
+test('a reading gone stale across a quarter hour shows the quarter hour he should have moved at, not a later one, and where to fly counts from it', async () => {
+  const { env, w } = await maolInMexico();
+  // Out of view from 10:46 to 11:01: the tab still draws, but nothing is asked.
+  w.hide();
+  await env.advance(15 * MIN);
+  assert.deepEqual(maolNotes(w).slice(0, 2), ['moves at :00 :15 :30 :45, here since 10:46 TCT', 'next Cayman Islands about 11:00 TCT']);
+  // His stops still count from the 10:45-11:00 one in Mexico: BCT lands in the Cayman Islands at
+  // 11:11, and the airstrip's soonest is Canada, landing at 11:28.
+  assert.deepEqual(flyNotes(w), ['airstrip: fly to Canada, he\'s there 11:30-11:45 TCT', 'BCT: fly to Cayman Islands, he\'s there 11:00-11:15 TCT']);
 });
 
 test('while an estimate shows, the lines are built again only when what they say changes, not every 5 seconds', async () => {
@@ -1700,9 +1747,9 @@ test('with two falls too close to put in order, the next stop shows when every o
   const { env, w } = await started({ torn: allUp() });
   await fallWithATie(env);
   await go(env, ['Hawaii']);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:45 TCT', 'next Mexico about 11:00 TCT']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:45 TCT', 'next Mexico about 11:00 TCT']);
   await go(env, ['Mexico']);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:46 TCT', 'next Cayman Islands or United Kingdom about 11:01 TCT']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:46 TCT', 'next Cayman Islands or United Kingdom about 11:00 TCT']);
   assert.deepEqual(catchNotes(w), [], 'where to fly needs his route');
 });
 
@@ -1711,8 +1758,8 @@ test('one move seen among falls too close to put in order settles their order, e
   await fallWithATie(caymanFirst.env);
   await go(caymanFirst.env, ['Mexico', 'Cayman Islands']);
   assert.deepEqual(maolNotes(caymanFirst.w), [
-    'moves about every 15 min, here since 10:46 TCT',
-    'next United Kingdom about 11:01 TCT',
+    'moves at :00 :15 :30 :45, here since 10:46 TCT',
+    'next United Kingdom about 11:00 TCT',
     'route Mexico > Cayman Islands > United Kingdom > Canada > Hawaii',
   ]);
   assert.equal(catchNotes(caymanFirst.w).length, 2);
@@ -1721,8 +1768,8 @@ test('one move seen among falls too close to put in order settles their order, e
   await fallWithATie(ukFirst.env);
   await go(ukFirst.env, ['United Kingdom', 'Cayman Islands']);
   assert.deepEqual(maolNotes(ukFirst.w), [
-    'moves about every 15 min, here since 10:46 TCT',
-    'next Canada about 11:01 TCT',
+    'moves at :00 :15 :30 :45, here since 10:46 TCT',
+    'next Canada about 11:00 TCT',
     'route Mexico > United Kingdom > Cayman Islands > Canada > Hawaii',
   ]);
 });
@@ -1734,9 +1781,9 @@ test('with three falls too close to put in order, he has no next stop where it c
   await env.advance(MIN);
   await fall(env, [103]);
   await go(env, ['Hawaii']);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:44 TCT', 'next Mexico about 10:59 TCT']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:44 TCT', 'next Mexico about 10:45 TCT']);
   await go(env, ['Mexico']);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:45 TCT']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:45 TCT']);
 });
 
 test('a move that fits no order the falls allow: no next stop and no route until he has been seen in all five countries', async () => {
@@ -1744,17 +1791,17 @@ test('a move that fits no order the falls allow: no next stop and no route until
   await fall(env, [102, 100, 104, 101, 103]);
   await go(env, ['Mexico']);
   assert.deepEqual(maolNotes(w), [
-    'moves about every 15 min, here since 10:46 TCT',
-    'next Hawaii about 11:01 TCT',
+    'moves at :00 :15 :30 :45, here since 10:46 TCT',
+    'next Hawaii about 11:00 TCT',
     'route Canada > Cayman Islands > United Kingdom > Mexico > Hawaii',
   ]);
   // The falls have Hawaii after Mexico, but he goes on to Canada.
   await go(env, ['Canada']);
-  assert.deepEqual(maolNotes(w), ['moves about every 15 min, here since 10:47 TCT']);
+  assert.deepEqual(maolNotes(w), ['moves at :00 :15 :30 :45, here since 10:47 TCT']);
   await go(env, ['Hawaii', 'Cayman Islands', 'United Kingdom']);
   assert.deepEqual(maolNotes(w), [
-    'moves about every 15 min, here since 10:50 TCT',
-    'next Mexico about 11:05 TCT',
+    'moves at :00 :15 :30 :45, here since 10:50 TCT',
+    'next Mexico about 11:00 TCT',
     'route Mexico > Canada > Hawaii > Cayman Islands > United Kingdom',
   ]);
 });
@@ -1764,7 +1811,7 @@ test('falls each under 30 s after the one before make one run, however far apart
   const feed = (canadaAt) => [fellEntry(101, '2026-10-26T10:24:02Z'), fellEntry(100, '2026-10-26T11:52:00Z'), fellEntry(104, '2026-10-26T11:52:20Z'), fellEntry(102, canadaAt), fellEntry(103, '2026-10-26T12:20:00Z')];
   // Canada 20 s after the UK: the Cayman Islands, the UK and Canada are one run of three, so
   // from Mexico his next stop could be any of them. 40 s after: only the first two are a run.
-  for (const [canadaAt, next] of [['2026-10-26T11:52:40Z', []], ['2026-10-26T11:53:00Z', ['next Cayman Islands or United Kingdom']]]) {
+  for (const [canadaAt, next] of [['2026-10-26T11:52:40Z', []], ['2026-10-26T11:53:00Z', ['next Cayman Islands or United Kingdom about 12:45 TCT']]]) {
     const env = device({ torn: allBeaten('Awoken in Mexico'), tornstats: feed(canadaAt) });
     env.now = at;
     env.store[KEY_STORE] = KEY;

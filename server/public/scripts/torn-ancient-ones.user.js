@@ -83,7 +83,8 @@
   const HIGHLIGHT_MS = 5 * 60 * 1000;
   // A new summoning is possible this long after M'aol's death, by Torn's patch notes (#408).
   const RESUMMON_MS = 48 * 60 * 60 * 1000;
-  // M'aol stays this long in each country of his route.
+  // M'aol stays this long in each country of his route, moving on the quarter hours (:00, :15,
+  // :30 and :45).
   const STOP_MS = 15 * 60 * 1000;
   // Two falls this close together can't be put in order: the script saw them in the same sweep,
   // or TornStats in the same check.
@@ -421,20 +422,37 @@
     if (moves.length === countries.length) return [moves];
     const falls = PRAETORIANS.map((id) => ({ place: r.npcs[id].place, at: fellAt(r, id) }));
     if (falls.some((f) => !f.at)) return [];
-    falls.sort((a, b) => a.at - b.at);
-    // Runs of falls, each under 30 s after the one before: the order inside a run isn't known.
-    const runs = [];
-    falls.forEach((f, i) => {
-      if (i > 0 && f.at - falls[i - 1].at < FALL_GAP_MS) runs[runs.length - 1].push(f.place);
-      else runs.push([f.place]);
-    });
     let ways = [[]];
-    runs.forEach((run) => {
+    fallRuns(falls).forEach((run) => {
       const longer = [];
       ways.forEach((way) => orders(run).forEach((o) => longer.push(way.concat(o))));
       ways = longer;
     });
     return ways.filter((way) => fitsMoves(way, r.trail));
+  }
+
+  // The places of these falls, each with a time, in the order they fell, as runs: a fall under
+  // 30 s after the one before joins its run, since the order inside a run isn't known. Falls with
+  // the same time keep the order they came in.
+  function fallRuns(falls) {
+    const sorted = falls.slice().sort((a, b) => a.at - b.at);
+    const runs = [];
+    sorted.forEach((f, i) => {
+      if (i > 0 && f.at - sorted[i - 1].at < FALL_GAP_MS) runs[runs.length - 1].push(f.place);
+      else runs.push([f.place]);
+    });
+    return runs;
+  }
+
+  // M'aol's route so far, while he is shielded: the countries of the praetorians beaten so far, in
+  // the order they fell, those that fell too close together to put in order joined by a slash.
+  // '' when none has fallen, or when one fell with no time or in no country the script knows: the
+  // order can't be told then.
+  function routeSoFar(r) {
+    const falls = PRAETORIANS.filter((id) => r.npcs[id] && r.npcs[id].state === 'beaten')
+      .map((id) => ({ place: r.npcs[id].place, at: fellAt(r, id) }));
+    if (!falls.length || falls.some((f) => !f.at || COUNTRIES.indexOf(f.place) < 0)) return '';
+    return fallRuns(falls).map((run) => run.join('/')).join(' > ');
   }
 
   // Every order of these places.
@@ -461,8 +479,8 @@
   // Where M'aol goes next: the country after his current one on each of his routes, from the
   // last back to the first. One country when they all give the same one, two when they give
   // two (in the order the routes give them), and null when they give more, when there is no
-  // route, or when he is somewhere not on them. When: 15 minutes after he was seen arriving;
-  // 0 when his arrival had no time.
+  // route, or when he is somewhere not on them. When: the quarter hour after the reading that saw
+  // him there, which is in the past when that reading has gone stale.
   function nextStop(r, ways) {
     const m = r.npcs[MAOL];
     const places = [];
@@ -473,7 +491,12 @@
       if (places.indexOf(next) < 0) places.push(next);
     }
     if (!places.length || places.length > 2) return null;
-    return { places: places, at: m.since ? m.since + STOP_MS : 0 };
+    return { places: places, at: nextMark(m.readAt) };
+  }
+
+  // The quarter hour (:00, :15, :30 or :45) after this time: M'aol moves on each.
+  function nextMark(ms) {
+    return Math.floor(ms / STOP_MS) * STOP_MS + STOP_MS;
   }
 
   // ===== WHERE TO FLY =====
@@ -529,23 +552,25 @@
     return parts.join(' | ');
   }
 
-  // Where each flight catches M'aol soonest, once his route is known and his arrival here had a
-  // time: his stops are 15 minutes each, in route order from his arrival here, round and round.
-  // For each country on the route, a flight catches him on his first stop there that he leaves
-  // at least 2 minutes after it lands. The soonest catch wins, and it is too late when he should
-  // die less than 2 minutes after it. No notes when he has stayed longer than his 15 minutes.
+  // Where each flight catches M'aol soonest, once his route is known: his stops are the quarter
+  // hours, in route order from the one his newest reading fell in, round and round. For each
+  // country on the route, a flight catches him on his first stop there that he leaves at least 2
+  // minutes after it lands. The soonest catch wins, and it is too late when he should die less
+  // than 2 minutes after it. No notes when he was seen arriving and has stayed longer than his 15
+  // minutes since.
   function maolFly(r, way, nowMs) {
     const m = r.npcs[MAOL];
     const here = way && m ? way.indexOf(m.place) : -1;
-    if (here < 0 || !m.since || m.readAt - m.since > OVERSTAY_MS) return [];
+    if (here < 0 || (m.since && m.readAt - m.since > OVERSTAY_MS)) return [];
+    const start = nextMark(m.readAt) - STOP_MS;
     const dies = deathAt(m);
     return FLIGHTS.map((f) => {
       let best = null;
       way.forEach((place, i) => {
         const land = nowMs + flightMin(place, f[1]) * 60000;
         let k = (i - here + way.length) % way.length;
-        while (m.since + (k + 1) * STOP_MS - SPARE_MIN_MS < land) k += way.length;
-        const from = m.since + k * STOP_MS;
+        while (start + (k + 1) * STOP_MS - SPARE_MIN_MS < land) k += way.length;
+        const from = start + k * STOP_MS;
         const at = Math.max(land, from);
         if (!best || at < best.at) best = { place: place, at: at, from: from };
       });
@@ -892,12 +917,12 @@
       const at = n.state === 'beaten' ? fellAt(r, id) : n.since;
       state = n.state + (at ? ' ' + clock(at, nowMs) : '');
     } else if (id === MAOL && canHit) {
-      notes.push('moves about every 15 min' + (n.since ? ', here since ' + clock(n.since, nowMs) : ''));
+      notes.push('moves at :00 :15 :30 :45' + (n.since ? ', here since ' + clock(n.since, nowMs) : ''));
       const ways = routes(r);
       // His route, once one order is left of those he may be going round in.
       const way = ways.length === 1 ? ways[0] : null;
       const stop = nextStop(r, ways);
-      if (stop) notes.push('next ' + stop.places.join(' or ') + (stop.at ? ' about ' + clock(stop.at, nowMs) : ''));
+      if (stop) notes.push('next ' + stop.places.join(' or ') + ' about ' + clock(stop.at, nowMs));
       if (way) notes.push('route ' + way.join(' > '));
       const dies = deathAt(n);
       if (dies) notes.push('dies about ' + clock(dies, nowMs));
@@ -905,6 +930,8 @@
     } else if (id === MAOL) {
       const up = PRAETORIANS.filter((p) => !down(r.npcs[p])).length;
       state = 'shielded, ' + up + ' praetorian' + (up === 1 ? '' : 's') + ' up';
+      const soFar = routeSoFar(r);
+      if (soFar) notes.push('route so far ' + soFar);
     } else if (n.state === 'up') {
       const note = flyNote(n, nowMs);
       if (note) notes.push(note);
