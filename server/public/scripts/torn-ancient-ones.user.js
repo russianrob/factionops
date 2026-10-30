@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Ancient Ones
 // @namespace    RussianRob
-// @version      1.0.6
+// @version      1.0.7
 // @description  Where Torn's Halloween Ancient Ones are (M'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.
 // @author       RussianRob
 // @downloadURL  https://tornwar.com/scripts/torn-ancient-ones.user.js
@@ -29,6 +29,8 @@
 // =============================================================================
 // CHANGELOG
 // =============================================================================
+// v1.0.7  - M'aol's stop times put the date on one that falls on another day (past
+//           midnight, or from a reading a day old), as his next stop does.
 // v1.0.6  - Once M'aol has stayed in one country more than 17 minutes, his route shows
 //           in place of his stop times, as where to fly already hides then: the box
 //           can't time his stops until he moves.
@@ -58,7 +60,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.6';
+  const VERSION = '1.0.7';
 
   // Loaded twice on one page (two copies installed, or PDA injecting it again), it runs once.
   // The mark goes on the page itself, which every copy can see; each copy may have its own window.
@@ -515,11 +517,20 @@
 
   // The stops after his next one, round his route to where he is now, each with the quarter hour
   // he should get there: "United Kingdom 11:15, Mexico 11:30, Hawaii 11:45, Canada 12:00 TCT".
-  // The next stop is one of the route's countries, as nextStop took it from the route.
-  function lapTimes(way, stop) {
+  // A stop on another day from the one before it (the first: from today) gets that day's date,
+  // as in "Hawaii Oct 27 00:00". The next stop is one of the route's countries, as nextStop took
+  // it from the route.
+  function lapTimes(way, stop, nowMs) {
     const i = way.indexOf(stop.places[0]);
     const parts = [];
-    for (let k = 1; k < way.length; k++) parts.push(way[(i + k) % way.length] + ' ' + hhmm(stop.at + k * STOP_MS));
+    let day = tctDay(nowMs);
+    for (let k = 1; k < way.length; k++) {
+      const at = stop.at + k * STOP_MS;
+      const d = new Date(at);
+      const date = tctDay(at) === day ? '' : MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate() + ' ';
+      day = tctDay(at);
+      parts.push(way[(i + k) % way.length] + ' ' + date + hhmm(at));
+    }
     return parts.join(', ') + ' TCT';
   }
 
@@ -977,7 +988,7 @@
       // After his next stop, when he should be in each country on one lap round; the route itself
       // when there is no next stop to count from (he is somewhere off his route), or the box can't
       // time his stops (he has stayed in one country more than 17 minutes).
-      if (way && stop && !overstayed(n)) notes.push('then ' + lapTimes(way, stop));
+      if (way && stop && !overstayed(n)) notes.push('then ' + lapTimes(way, stop, nowMs));
       else if (way) notes.push('route ' + way.join(' > '));
       const dies = deathAt(n);
       if (dies) notes.push('dies about ' + clock(dies, nowMs));
@@ -1094,6 +1105,11 @@
     const time = hhmm(ms) + ' TCT';
     const today = d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
     return today ? time : MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate() + ' ' + time;
+  }
+
+  // The day a time falls on in TCT, as a count of days.
+  function tctDay(ms) {
+    return Math.floor(ms / (24 * 60 * 60 * 1000));
   }
 
   // A time in TCT as HH:MM, with nothing after it.

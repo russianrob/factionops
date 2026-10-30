@@ -9,7 +9,7 @@ import { parseHTML } from 'linkedom';
 // TAO_SRC lets a mutant copy be tested in place of the served file.
 const SRC = process.env.TAO_SRC || '/opt/warboard/server/public/scripts/torn-ancient-ones.user.js';
 const META = SRC.replace(/\.user\.js$/, '.meta.js');
-const RUNNING = '[Torn Ancient Ones 1.0.6] running';
+const RUNNING = '[Torn Ancient Ones 1.0.7] running';
 const KEY_STORE = 'torn-ancient-ones-key';
 const READING_STORE = 'torn-ancient-ones-reading';
 const BOX_STORE = 'torn-ancient-ones-box';
@@ -250,7 +250,7 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.deepEqual(tags, [
     'name Torn Ancient Ones',
     'namespace RussianRob',
-    'version 1.0.6',
+    'version 1.0.7',
     'description Where Torn\'s Halloween Ancient Ones are (M\'aol and his five praetorians), in a small box on Torn pages: country, life left, standing or beaten, an attack link, when M\'aol can be hit and his route, and where to fly by airstrip or BCT. It needs a Public API key; Torn PDA gives its own.',
     'author RussianRob',
     'downloadURL https://tornwar.com/scripts/torn-ancient-ones.user.js',
@@ -267,8 +267,9 @@ test('the header is the spec\'s, and the meta file is the header and a newline',
   assert.match(src, /\n\/\/ TORN'S API TERMS\n/);
   assert.match(src, /\n\/\/ Data Sharing {11}None\. The script also reads TornStats' public feed of the six, and sends\n/);
   assert.match(src, /\n\/\/ Key Access Level {7}Public\.\n/);
-  assert.match(src, /\n  const VERSION = '1\.0\.6';\n/);
+  assert.match(src, /\n  const VERSION = '1\.0\.7';\n/);
   assert.match(src, /\n\/\/ CHANGELOG\n/);
+  assert.match(src, /\n\/\/ v1\.0\.7  - M'aol's stop times put the date on one that falls on another day \(past\n/);
   assert.match(src, /\n\/\/ v1\.0\.6  - Once M'aol has stayed in one country more than 17 minutes, his route shows\n/);
   assert.match(src, /\n\/\/ v1\.0\.5  - Once M'aol can be hit, the times he should reach each country on one lap\n/);
   assert.match(src, /\n\/\/ v1\.0\.4  - Reads TornStats' feed as it is served now \(the six under npcs\), so the\n/);
@@ -297,7 +298,7 @@ test('the source is plain ASCII, guards every GM_* call, holds PDA\'s placeholde
 
 test('it says once in the console that it is running, and a second copy on the same page does nothing', async () => {
   const { env, w } = await started();
-  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.6');
+  assert.equal(w.document.documentElement.getAttribute('data-torn-ancient-ones'), '1.0.7');
   w.run();
   await env.advance(0);
   assert.deepEqual(w.logs, [RUNNING]);
@@ -954,14 +955,29 @@ test('his route from the falls: each timed by the script, at least 30 s apart', 
   ]);
 });
 
-test('after his next stop, the time he\'ll be in each country on one lap round, in place of his route', async () => {
-  const { env, w } = await started({ torn: allUp() });
-  await fall(env, [102, 100, 104, 101, 103]);
-  await go(env, ['Canada']);
-  assert.deepEqual(maolNotes(w), [
-    'moves at :00 :15 :30 :45, here since 10:46 TCT',
-    'next Cayman Islands about 11:00 TCT',
-    'then United Kingdom 11:15, Mexico 11:30, Hawaii 11:45, Canada 12:00 TCT',
+test('his stop times put the date on the first one past midnight', async () => {
+  const env = device({ torn: allUp() });
+  env.now = Date.UTC(2026, 9, 26, 23, 35);
+  env.store[KEY_STORE] = KEY;
+  const w = env.tab().run();
+  await env.advance(0);
+  await fall(env, [101, 100, 104, 102, 103]);
+  await go(env, ['Mexico']);
+  assert.deepEqual(maolNotes(w).slice(1), [
+    'next Cayman Islands about 23:45 TCT',
+    'then United Kingdom Oct 27 00:00, Canada 00:15, Hawaii 00:30, Mexico 00:45 TCT',
+  ]);
+});
+
+test('a reading from another day puts that day\'s date on his stop times, as on his next stop', async () => {
+  const { env, w } = await maolInMexico();
+  // Torn refuses the key from here on, so the reading stays the one from 10:47 TCT.
+  env.tornError = { code: 2, error: 'Incorrect key' };
+  await env.advance(MIN);
+  await env.advance(22 * 60 * MIN);
+  assert.deepEqual(maolNotes(w).slice(1), [
+    'next Cayman Islands about Oct 26 11:00 TCT',
+    'then United Kingdom Oct 26 11:15, Canada 11:30, Hawaii 11:45, Mexico 12:00 TCT',
   ]);
 });
 
@@ -993,6 +1009,10 @@ test('his moves beat the falls when they disagree', async () => {
   assert.deepEqual(maolNotes(w).slice(1), ['next United Kingdom about 11:00 TCT', 'then Mexico 11:15, Hawaii 11:30, Canada 11:45, Cayman Islands 12:00 TCT']);
   await go(env, ['United Kingdom']);
   assert.deepEqual(maolNotes(w).slice(1), ['next Mexico about 11:00 TCT', 'then Hawaii 11:15, Canada 11:30, Cayman Islands 11:45, United Kingdom 12:00 TCT']);
+  // Both orders go round the same way, so only the route itself, shown off his route, tells
+  // which one the box took: his moves start it in Mexico, the falls in Canada.
+  await go(env, ['Torn City']);
+  assert.deepEqual(maolNotes(w).slice(1), ['route Mexico > Hawaii > Canada > Cayman Islands > United Kingdom']);
 });
 
 test('the next stop is on the quarter hour even when his arrival wasn\'t seen in time, and there is none from Torn City', async () => {
