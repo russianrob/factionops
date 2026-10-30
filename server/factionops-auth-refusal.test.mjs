@@ -37,9 +37,10 @@ const DRAWN = `
   </li>
 </ul>`;
 
+// The teardown, with the 📣 box's close that it calls.
 function rig(html = DRAWN) {
   const { document } = parseHTML(`<html><body>${html}</body></html>`);
-  const api = new Function('document', fn('teardownWarPageUi')
+  const api = new Function('document', fn('teardownWarPageUi') + '\n' + fn('closeBroadcastBox') + '\n' + fn('broadcastBoxEscape')
     + '; globalThis.API={teardownWarPageUi}; return API;')(document);
   return { document, api };
 }
@@ -76,6 +77,13 @@ test('it un-hides rows the filter had hidden', () => {
   api.teardownWarPageUi();
   assert.equal([...document.querySelectorAll('li.enemy')].filter((r) => r.style.display === 'none').length, 0,
     'a row stayed hidden after the overlay left');
+});
+
+test('it closes the 📣 box too', () => {
+  const { document, api } = rig(DRAWN + '<div id="fo-bc-box"><textarea id="fo-bc-text"></textarea></div>');
+  api.teardownWarPageUi();
+  assert.equal(document.getElementById('fo-bc-box'), null, 'the box outlived the refusal');
+  assert.equal(document.querySelectorAll('.fo-wp-call').length, 0);
 });
 
 test('teardown is idempotent and safe on a bare page', () => {
