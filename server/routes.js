@@ -104,6 +104,7 @@ import { validateCircularUrl, buildShortcutPlist } from "./circular-pipeline.js"
 import { processPlanner, looksLikePlanner, readLatestPlanner, listPlanners } from "./planner-store.js";
 import { generateTasks, readSchedule as readTaskSchedule, parseSchedule, OUT_LATEST as TASKS_LATEST_FILE } from "./pm-checklist-store.js";
 import * as pendingBroadcasts from "./pending-broadcasts.js";
+import { cleanBroadcastText, holdsBroadcastRole, picksFromSettings, addPick, removePick, rememberBroadcast, latestBroadcastFor } from "./broadcast-bar.js";
 import { recordAssist, takeAssistFor, hasAssistFor } from "./assist-relay.js";
 import * as inspectRelay from "./inspect-relay.js";
 import * as missingOverrides from "./missing-overrides.js";
@@ -3691,6 +3692,14 @@ router.post("/api/enemy-surge/settings", requireAuth, (req, res) => {
   return res.json({ ok: true, settings: updated });
 });
 
+// The owner, or a member whose position is one of the faction's broadcast
+// roles (leader, co-leader, war leader and banker unless the faction changed
+// them): who may send a broadcast and keep the faction's quick picks.
+function mayBroadcast(user) {
+  return String(user.playerId) === "137558"
+    || holdsBroadcastRole(user.factionPosition, getAllowedBroadcastRoles(user.factionId));
+}
+
 router.post("/api/broadcast", requireAuth, (req, res) => {
   const { playerId, playerName, factionPosition, factionId } = req.user;
   const { message, type, warId } = (req.body || {});
@@ -3703,21 +3712,23 @@ router.post("/api/broadcast", requireAuth, (req, res) => {
     return res.status(400).json({ error: "Message is required." });
   }
 
-  // Check if it's the global admin (can broadcast anywhere)
-  const isGlobalAdmin = (String(playerId) === "137558");
-  
-  // Enforce leader/banker position (or custom faction roles)
-  const pos = (factionPosition || "").toLowerCase();
-  const allowedRoles = getAllowedBroadcastRoles(factionId);
-  const isLeader = allowedRoles.includes(pos);
-
-  if (!isLeader && !isGlobalAdmin) {
+  // The owner can broadcast anywhere; anyone else needs one of the faction's
+  // broadcast roles.
+  if (!mayBroadcast(req.user)) {
+    const pos = (factionPosition || "").toLowerCase();
     console.log(`[⚠️] Blocked unauthorized broadcast attempt from player ${playerId} (${playerName}) - Role: ${pos}`);
     return res.status(403).json({ error: "Only leaders and bankers can broadcast to the faction." });
   }
 
+  // FactionOps shows it as a bar about one line of a phone wide: trimmed,
+  // every run of spaces and newlines as one space, and 150 characters at most.
+  const text = cleanBroadcastText(message);
+  if (!text) {
+    return res.status(400).json({ error: "A broadcast is 1 to 150 characters." });
+  }
+
   const payload = {
-    message: message,
+    message: text,
     type: type || "info",
     // Attribution — lets clients show "X sent: <message>" in their toast.
     // Includes the sender so they ALSO see their own broadcast confirmed
@@ -3725,8 +3736,15 @@ router.post("/api/broadcast", requireAuth, (req, res) => {
     // including the originator).
     senderName: playerName,
     senderId: String(playerId),
+    // The sender's faction position as Torn words it, for the bar's
+    // "<message> · <name> (<position>)".
+    senderRole: String(factionPosition || ""),
     ts: Date.now(),
   };
+
+  // Kept for GET /api/broadcast/latest: a Torn page that is not connected
+  // when it goes out asks for it when it loads.
+  rememberBroadcast(warId, payload);
 
   // 1. Broadcast to Socket.IO clients in this war room
   if (io) {
@@ -3764,7 +3782,7 @@ router.post("/api/broadcast", requireAuth, (req, res) => {
   if (apiKey) {
     fetchFactionMembers(factionId, apiKey).then(members => {
       const memberIds = Object.keys(members);
-      push.notifyBroadcast(memberIds, warId, playerName, message);
+      push.notifyBroadcast(memberIds, warId, playerName, text);
       // Also queue for any faction member we didn't already capture
       // above as "online" — this catches PDA polls that come in within
       // the next minute or two, before the player's next poll tick
@@ -3776,12 +3794,58 @@ router.post("/api/broadcast", requireAuth, (req, res) => {
   } else {
     // Fallback: just send to currently online/tracked players if no API key
     const onlinePlayers = store.getOnlinePlayersForWar(warId).map(p => p.id);
-    push.notifyBroadcast(onlinePlayers, warId, playerName, message);
+    push.notifyBroadcast(onlinePlayers, warId, playerName, text);
   }
 
-  console.log(`[📣] Faction Broadcast sent to war ${warId} by ${playerName}: ${message}`);
+  console.log(`[📣] Faction Broadcast sent to war ${warId} by ${playerName}: ${text}`);
 
   return res.json({ success: true });
+});
+
+// ── GET /api/broadcast/latest ───────────────────────────────────────────
+// The latest broadcast for the member's own faction's war while it is under
+// 10 minutes old, with its age (broadcast-bar.js). FactionOps asks once when
+// a Torn page loads, at most every 30 s, so a member on a page with no
+// connection when it went out still gets the bar. The war is the one the
+// sign-in names, never one the page sends.
+router.get("/api/broadcast/latest", requireAuth, (req, res) => {
+  const { factionId, playerId } = req.user;
+  const warId = `war_${factionId}`;
+  const war = factionId ? store.getWar(warId) : null;
+  return res.json({ broadcast: factionId ? latestBroadcastFor(warId, war, playerId, Date.now()) : null });
+});
+
+// ── GET/POST /api/broadcast/picks ───────────────────────────────────────
+// The quick picks in the war page's 📣 box: the faction's own list, shared by
+// everyone who may broadcast and saved in the faction's settings. POST takes
+// { add } (the box's +) or { remove } (a pick's ×) and answers the list as it
+// now stands.
+router.get("/api/broadcast/picks", requireAuth, (req, res) => {
+  if (!mayBroadcast(req.user)) {
+    return res.status(403).json({ error: "Only broadcasters can use the quick picks." });
+  }
+  return res.json({ picks: picksFromSettings(store.getFactionSettings(req.user.factionId)) });
+});
+
+router.post("/api/broadcast/picks", requireAuth, (req, res) => {
+  if (!mayBroadcast(req.user)) {
+    return res.status(403).json({ error: "Only broadcasters can use the quick picks." });
+  }
+  const { factionId } = req.user;
+  const { add, remove } = (req.body || {});
+  const current = picksFromSettings(store.getFactionSettings(factionId));
+  let picks;
+  if (typeof add === "string") {
+    const added = addPick(current, add);
+    if (added.error) return res.status(400).json({ error: added.error });
+    picks = added.picks;
+  } else if (typeof remove === "string") {
+    picks = removePick(current, remove);
+  } else {
+    return res.status(400).json({ error: "add or remove is required." });
+  }
+  updateFactionSettings(factionId, { broadcastPicks: picks });
+  return res.json({ picks });
 });
 
 // ── War chat ────────────────────────────────────────────────────────────
