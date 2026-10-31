@@ -2342,6 +2342,44 @@
         return (pieces || []).find(p => p && p.part === part && p.holder && String(p.holder.id) === String(memberId)) || null;
     }
 
+    // The Armour view's lines: one per piece name, in the order the pieces
+    // are listed (head to feet, then by name), each with the places in the
+    // list of the pieces it stands for. A ranked-war piece is a line of its
+    // own, so Loan never lends it in place of a plain piece of that name.
+    function mgr_armourGroups(pieces) {
+        const out = [], byKey = new Map();
+        (pieces || []).forEach((p, i) => {
+            if (!p) return;
+            const key = p.rarity ? `rw:${p.armoryID}` : p.name;
+            let g = byKey.get(key);
+            if (!g) {
+                g = { key, name: p.name, part: p.part, rarity: p.rarity, bonuses: p.bonuses, rows: [] };
+                byKey.set(key, g);
+                out.push(g);
+            }
+            g.rows.push(i);
+        });
+        return out;
+    }
+
+    // The holders under a line, as places in the list: anyone who has left
+    // the faction first, then whoever was last on longest ago, then anyone
+    // with no time. With no member list there is nothing to rank by, so
+    // they keep list order, as ties do.
+    function mgr_holderOrder(pieces, rows, membersMap) {
+        const held = (rows || []).filter(i => pieces[i] && pieces[i].holder);
+        if (!membersMap || !membersMap.size) return held;
+        const rank = (i) => {
+            const id = String(pieces[i].holder.id);
+            if (!membersMap.has(id)) return -Infinity;
+            const la = membersMap.get(id);
+            return la && typeof la.timestamp === 'number' ? la.timestamp : Infinity;
+        };
+        return held.map((i, at) => ({ i, at, r: rank(i) }))
+            .sort((a, b) => (a.r === b.r ? a.at - b.at : a.r < b.r ? -1 : 1))
+            .map(x => x.i);
+    }
+
     // The search: a copy's name, type, body part, rarity, bonus, or holder,
     // any case.
     function mgr_armouryMatches(row, query) {
@@ -3431,12 +3469,17 @@
         .mgr-arm-main { display: flex; align-items: center; gap: 6px; }
         .mgr-arm-name { font-weight: 600; font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .mgr-arm-type { font-size: 11px; color: #9ca3af; white-space: nowrap; }
+        .mgr-arm-count { font-size: 11px; color: #9ca3af; white-space: nowrap; }
         .mgr-arm-sub { display: flex; align-items: center; gap: 6px; margin-top: 3px; min-height: 28px; }
         .mgr-arm-bonus { flex: 1; min-width: 0; font-size: 11px; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .mgr-arm-sub .mgr-action-btn { width: auto; margin: 0; padding: 3px 10px; }
+        .mgr-arm-main .mgr-action-btn { width: auto; margin: 0; padding: 3px 10px; }
+        .mgr-arm-row > .mgr-arm-bonus { margin-top: 3px; }
         .mgr-arm-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
         .mgr-arm-red { background: #ef4444; } .mgr-arm-orange { background: #f59e0b; } .mgr-arm-yellow { background: #facc15; }
         .mgr-arm-chip { display: inline-flex; align-items: center; gap: 3px; max-width: 60%; padding: 1px 2px 1px 8px; font-size: 11px; border-radius: 14px; background: #0d1b2a; border: 1px solid #2d4a3e; color: #e5e7eb; white-space: nowrap; overflow: hidden; }
+        .mgr-arm-borrowers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+        .mgr-arm-borrowers .mgr-arm-chip { max-width: 100%; }
         .mgr-arm-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .mgr-arm-seen { flex: none; }
         .mgr-seen-on { color: #4ade80; } .mgr-seen-idle { color: #fbbf24; } .mgr-seen-off { color: #9ca3af; } .mgr-seen-left { color: #f87171; }
@@ -6962,9 +7005,13 @@
     // Weapons: each ranked-war weapon copy (rarity, bonuses, who holds it).
     // "Loan to" offers every member, holders too; after a loan the pick goes
     // back to "Loan to…", so a second weapon for anyone takes a fresh pick.
-    // Armour: every armour piece, head to feet. "Loan to" offers everyone
-    // short of a full set and keeps the pick after a loan, so a set goes out
-    // in a row; a second piece for a body part the member holds is refused.
+    // Armour: one line per piece name, head to feet, with how many are free
+    // ("N free of M") and one Loan that lends the first free piece of that
+    // name; a ranked-war piece is a line of its own. Under each line, a chip
+    // per holder: anyone who has left first, then whoever was last on
+    // longest ago. "Loan to" offers everyone short of a full set and keeps
+    // the pick after a loan, so a set goes out in a row; a second piece for
+    // a body part the member holds is refused.
     // In both, ↩ beside a holder takes that copy back (second tap), and every
     // request names that exact copy, so a plain copy of the same weapon is
     // never the one lent.
@@ -7204,8 +7251,50 @@
             + offered.map(([id, name]) => `<option value="${mgr_esc(id)}"${id === v.member ? ' selected' : ''}>${mgr_esc(name)}</option>`).join('');
     }
 
+    // A holder's chip: their name, when they were last on, and ↩ to take
+    // that copy back ("…" while it is the one on its way back).
+    function mgr_armouryChip(r, i, busy) {
+        const mine = busy && busy.view === mgr_armouryView && busy.row === i;
+        const seen = mgr_holderSeen(r.holder.id, mgr_membersLoaded ? mgr_memberLastAction : null, Date.now() / 1000);
+        return `<span class="mgr-arm-chip"><span class="mgr-arm-who">${mgr_esc(r.holder.name)}</span>${seen ? `<span class="mgr-arm-seen mgr-seen-${seen.cls}">· ${seen.text}</span>` : ''}<button class="mgr-arm-back" data-row="${i}" title="Take back from ${mgr_esc(r.holder.name)}"${busy ? ' disabled' : ''}>${mine ? '…' : '↩'}</button></span>`;
+    }
+
+    // The Armour view's lines, or '' when the search leaves none. One per
+    // piece name (mgr_armourGroups): its body part, "N free of M" and one
+    // Loan that lends the first free piece (greyed out when none is free),
+    // a ranked-war piece's bonuses, then a chip per holder in
+    // mgr_holderOrder. A search on the name, part or bonus shows the whole
+    // line; one on a holder shows the line with only that holder's chips.
+    function mgr_armourLinesHtml(v, busy) {
+        const partLabel = { head: 'Head', body: 'Body', legs: 'Legs', hands: 'Hands', feet: 'Feet' };
+        const members = mgr_membersLoaded ? mgr_memberLastAction : null;
+        let html = '';
+        for (const g of mgr_armourGroups(v.list)) {
+            const whole = mgr_armouryMatches({ ...v.list[g.rows[0]], holder: null }, v.query);
+            const held = mgr_holderOrder(v.list, g.rows, members).filter(i => whole || mgr_armouryMatches(v.list[i], v.query));
+            if (!whole && !held.length) continue;
+            const free = g.rows.filter(i => !v.list[i].holder);
+            const lending = busy && busy.view === 'armour' && busy.loan && g.rows.includes(busy.row);
+            const dot = g.rarity ? `<span class="mgr-arm-dot mgr-arm-${g.rarity}" title="${g.rarity}"></span>` : '';
+            html += `
+                <div class="mgr-arm-row">
+                    <div class="mgr-arm-main">
+                        ${dot}
+                        <span class="mgr-arm-name">${mgr_esc(g.name)}</span>
+                        <span class="mgr-arm-type">${partLabel[g.part] || ''}</span>
+                        <span class="mgr-arm-count">${free.length} free of ${g.rows.length}</span>
+                        <button class="mgr-action-btn mgr-btn-loan mgr-arm-loan" data-row="${free.length ? free[0] : g.rows[0]}"${busy || !free.length ? ' disabled' : ''}>${lending ? '…' : 'Loan'}</button>
+                    </div>
+                    ${g.rarity && g.bonuses.length ? `<div class="mgr-arm-bonus">${mgr_esc(g.bonuses.join(' · '))}</div>` : ''}
+                    ${held.length ? `<div class="mgr-arm-borrowers">${held.map(i => mgr_armouryChip(v.list[i], i, busy)).join('')}</div>` : ''}
+                </div>`;
+        }
+        return html;
+    }
+
     // The shown view's list: its read error, "Reading…" until it is read,
-    // then its count line and one row per copy the search matches.
+    // then its count line, and for Weapons one row per copy the search
+    // matches; Armour's lines are mgr_armourLinesHtml's.
     function mgr_renderArmouryList() {
         const list = document.getElementById('mgr-arm-list');
         if (!list) return;
@@ -7217,26 +7306,25 @@
         if (!rows.length) { list.innerHTML = `<div class="mgr-ok">${v.list.length ? 'Nothing matches.' : armour ? 'No armour in the armoury.' : 'No ranked-war weapons in the armoury.'}</div>`; return; }
         const free = v.list.filter(r => !r.holder).length;
         const busy = mgr_armouryBusy;
-        const partLabel = { head: 'Head', body: 'Body', legs: 'Legs', hands: 'Hands', feet: 'Feet' };
         let html = `<div class="mgr-arm-heading">${armour ? 'Armour' : 'Ranked-war weapons'} · ${v.list.length} · ${free} free</div>`;
+        if (armour) {
+            const lines = mgr_armourLinesHtml(v, busy);
+            list.innerHTML = lines ? html + lines : '<div class="mgr-ok">Nothing matches.</div>';
+            return;
+        }
         for (const r of rows) {
             const i = v.list.indexOf(r);
             const mine = busy && busy.view === view && busy.row === i;
-            const seen = r.holder && mgr_holderSeen(r.holder.id, mgr_membersLoaded ? mgr_memberLastAction : null, Date.now() / 1000);
             const action = r.holder
-                ? `<span class="mgr-arm-chip"><span class="mgr-arm-who">${mgr_esc(r.holder.name)}</span>${seen ? `<span class="mgr-arm-seen mgr-seen-${seen.cls}">· ${seen.text}</span>` : ''}<button class="mgr-arm-back" data-row="${i}" title="Take back from ${mgr_esc(r.holder.name)}"${busy ? ' disabled' : ''}>${mine ? '…' : '↩'}</button></span>`
+                ? mgr_armouryChip(r, i, busy)
                 : `<button class="mgr-action-btn mgr-btn-loan mgr-arm-loan" data-row="${i}"${busy ? ' disabled' : ''}>${mine ? '…' : 'Loan'}</button>`;
-            // Armour: a dot only on a ranked-war piece, its body part where a
-            // weapon shows its type, and no "No bonus" on every plain piece.
-            const dot = armour && !r.rarity ? '' : `<span class="mgr-arm-dot mgr-arm-${r.rarity}" title="${r.rarity}"></span>`;
-            const kind = armour ? (partLabel[r.part] || '') : r.type;
-            const bonus = r.bonuses.length ? mgr_esc(r.bonuses.join(' · ')) : armour ? '' : 'No bonus';
+            const bonus = r.bonuses.length ? mgr_esc(r.bonuses.join(' · ')) : 'No bonus';
             html += `
                 <div class="mgr-arm-row">
                     <div class="mgr-arm-main">
-                        ${dot}
+                        <span class="mgr-arm-dot mgr-arm-${r.rarity}" title="${r.rarity}"></span>
                         <span class="mgr-arm-name">${mgr_esc(r.name)}</span>
-                        <span class="mgr-arm-type">${mgr_esc(kind)}</span>
+                        <span class="mgr-arm-type">${mgr_esc(r.type)}</span>
                     </div>
                     <div class="mgr-arm-sub">
                         <span class="mgr-arm-bonus">${bonus}</span>

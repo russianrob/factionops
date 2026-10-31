@@ -313,8 +313,11 @@ await t("whoever is lent a copy stays in Loan to, with the pick back on Loan to�
 });
 
 // Waits for the loan on its way to land: the list is up and none of its
-// buttons is held back any more.
-const landed = (p) => p.waitForFunction(() => document.querySelector("#mgr-arm-list .mgr-arm-row") && !document.querySelector("#mgr-arm-list button:disabled"), null, { timeout: 5000 });
+// buttons is held back any more, but for an Armour Loan on a line with none
+// free, which always is.
+const landed = (p) => p.waitForFunction(() => document.querySelector("#mgr-arm-list .mgr-arm-row")
+  && [...document.querySelectorAll("#mgr-arm-list button:disabled")].every((b) => b.matches(".mgr-arm-loan")
+    && /^0 free of /.test(b.closest(".mgr-arm-row").querySelector(".mgr-arm-count")?.textContent || "")), null, { timeout: 5000 });
 
 await t("a tab read again while a loan is on its way shows the copy lent and clears the pick", async () => {
   const { ctx, p, posts } = await open({ pages: [TWO_FREE], accept: ["Primary"], slow: 1500 });
@@ -539,20 +542,25 @@ const view = async (p, name) => {
 const readTypes = (posts) => posts.filter((x) => x.step === "armouryTabContent" && x.start === "0").map((x) => x.type);
 const armouryLogs = (p) => p.evaluate(() => window.__logs.filter((l) => l.tag === "oc-armoury").map((l) => l.data));
 const pickValue = (p) => p.$eval("#mgr-arm-member", (s) => s.value);
-// Each row's piece, body part and holder ("" when free).
-const pieces = (p) => p.$$eval("#mgr-arm-list .mgr-arm-row", (els) => els.map((e) =>
-  [e.querySelector(".mgr-arm-name").textContent, e.querySelector(".mgr-arm-type").textContent, e.querySelector(".mgr-arm-who")?.textContent || ""]));
+// Each line's piece name, body part, "N free of M", and the holders under it
+// in the order shown.
+const lines = (p) => p.$$eval("#mgr-arm-list .mgr-arm-row", (els) => els.map((e) => [e.querySelector(".mgr-arm-name").textContent,
+  e.querySelector(".mgr-arm-type").textContent, e.querySelector(".mgr-arm-count")?.textContent || "", [...e.querySelectorAll(".mgr-arm-who")].map((w) => w.textContent)]));
+// Waits until a line of that piece name reads that "N free of M".
+const countIs = (p, name, text) => p.waitForFunction(([name, text]) => [...document.querySelectorAll("#mgr-arm-list .mgr-arm-row")]
+  .some((e) => e.querySelector(".mgr-arm-name")?.textContent === name && e.querySelector(".mgr-arm-count")?.textContent === text), [name, text], { timeout: 5000 });
+// Taps Loan on the line at that place in the list (0 first).
+const loanOnLine = (p, i) => p.locator("#mgr-arm-list .mgr-arm-row").nth(i).locator(".mgr-arm-loan").click();
 
-await t("the Armour switch lists every piece head to feet, free ones first, under its own count line", async () => {
+await t("the Armour switch lists one line per piece name, head to feet, with how many are free and who holds the rest", async () => {
   const { ctx, p, posts } = await open();
   await view(p, "armour");
-  const got = await pieces(p);
+  const got = await lines(p);
   const heading = await p.textContent("#mgr-arm-list .mgr-arm-heading");
   const logs = await armouryLogs(p);
   await ctx.close();
-  assert.deepStrictEqual(got, [["Combat Helmet", "Head", ""], ["Combat Helmet", "Head", "Bravo"], ["Combat Helmet", "Head", "Charlie"],
-    ["Combat Vest", "Body", "Bravo"], ["Combat Pants", "Legs", "Bravo"], ["Combat Gloves", "Hands", ""], ["Combat Gloves", "Hands", "Bravo"],
-    ["Combat Boots", "Feet", ""], ["Combat Boots", "Feet", "Bravo"]]);
+  assert.deepStrictEqual(got, [["Combat Helmet", "Head", "1 free of 3", ["Charlie", "Bravo"]], ["Combat Vest", "Body", "0 free of 1", ["Bravo"]],
+    ["Combat Pants", "Legs", "0 free of 1", ["Bravo"]], ["Combat Gloves", "Hands", "1 free of 2", ["Bravo"]], ["Combat Boots", "Feet", "1 free of 2", ["Bravo"]]]);
   assert.strictEqual(heading, "Armour · 9 · 3 free");
   assert.deepStrictEqual(readTypes(posts), ["weapons", "armour"]);
   const armour = logs.filter((l) => l.kind === "armour");
@@ -565,7 +573,7 @@ await t("armour is asked as armour first, then armor, and the one Torn answered 
   await view(p, "armour");
   const got = await rows(p), types = readTypes(posts), logs = await armouryLogs(p);
   await ctx.close();
-  assert.strictEqual(got.length, 9);
+  assert.strictEqual(got.length, 5);
   assert.deepStrictEqual(types, ["weapons", "armour", "armor"]);
   assert.deepStrictEqual(logs.filter((l) => l.kind === "armour").map((l) => l.cat), ["armor"]);
   ({ ctx, p } = await open({ armourPages: [[]] }));
@@ -581,19 +589,19 @@ await t("an answer of another tab's rows is not armour", async () => {
   await view(p, "armour");
   const got = await rows(p);
   await ctx.close();
-  assert.strictEqual(got.length, 9, JSON.stringify(got));
+  assert.strictEqual(got.length, 5, JSON.stringify(got));
   assert.ok(!got.some((r) => /AK-47|Glock|Zebra|Boxing/.test(r)), JSON.stringify(got));
 });
 
-await t("Loan in Armour lends that piece as Defensive, and the pick stays for the next piece", async () => {
+await t("Loan in Armour lends the first free piece of that name as Defensive, and the pick stays for the next piece", async () => {
   const { ctx, p, posts } = await open({ accept: ["Defensive"] });
   await view(p, "armour");
   await p.selectOption("#mgr-arm-member", "1000001");
-  await p.click('.mgr-arm-loan[data-row="0"]');
-  await holderIs(p, 0, "Alpha");
+  await loanOnLine(p, 0);
+  await countIs(p, "Combat Helmet", "0 free of 3");
   const after = await pickValue(p);
-  await p.click('.mgr-arm-loan[data-row="5"]');
-  await holderIs(p, 5, "Alpha");
+  await loanOnLine(p, 3);
+  await countIs(p, "Combat Gloves", "0 free of 2");
   const still = await pickValue(p);
   await ctx.close();
   assert.deepStrictEqual(actions(posts), ["loan 603 Defensive Alpha [1000001]", "loan 607 Defensive Alpha [1000001]"]);
@@ -695,13 +703,15 @@ await t("switching back to Weapons keeps its list, pick and search", async () =>
   assert.strictEqual(pick, "1000002");
 });
 
-await t("the search in Armour finds a piece, a body part or a holder", async () => {
+await t("the search in Armour finds a piece name, a body part or a holder; a holder's search shows only their pieces", async () => {
   const { ctx, p } = await open();
   await view(p, "armour");
-  const count = async (q) => { await p.fill("#mgr-arm-search", q); return (await rows(p)).length; };
-  const got = [await count("gloves"), await count("feet"), await count("charlie")];
+  const find = async (q) => { await p.fill("#mgr-arm-search", q); return lines(p); };
+  const gloves = await find("gloves"), feet = await find("feet"), charlie = await find("charlie"), helmet = await find("helmet");
   await ctx.close();
-  assert.deepStrictEqual(got, [2, 2, 1]);
+  assert.deepStrictEqual([gloves.length, feet.length, charlie.length], [1, 1, 1]);
+  assert.deepStrictEqual(charlie, [["Combat Helmet", "Head", "1 free of 3", ["Charlie"]]]);
+  assert.deepStrictEqual(helmet, [["Combat Helmet", "Head", "1 free of 3", ["Charlie", "Bravo"]]]);
 });
 
 await t("↩ in Armour takes that piece back as Defensive", async () => {
@@ -709,9 +719,65 @@ await t("↩ in Armour takes that piece back as Defensive", async () => {
   await view(p, "armour");
   const back = '.mgr-arm-back[data-row="1"]';
   await p.click(back); await p.click(back);
-  await p.waitForFunction(() => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[1].innerText.includes("Loan"), null, { timeout: 5000 });
+  await countIs(p, "Combat Helmet", "2 free of 3");
   await ctx.close();
   assert.deepStrictEqual(actions(posts), ["retrieve 602 Defensive Bravo [1000002]"]);
+});
+
+await t("holders under a line are listed ex-members first, then longest offline first; a line with none free greys out its Loan", async () => {
+  const HELMETS = [piece(621, "Combat Helmet", BRAVO), piece(622, "Combat Helmet", { userID: 1000009, playername: "Gone" }),
+    piece(623, "Combat Helmet", { userID: 1000001, playername: "Alpha" }), piece(624, "Combat Helmet", { userID: 1000003, playername: "Charlie" })];
+  const { ctx, p } = await open({ armourPages: [HELMETS] });
+  await view(p, "armour");
+  const got = await lines(p);
+  const off = await p.$eval("#mgr-arm-list .mgr-arm-loan", (b) => b.disabled);
+  await ctx.close();
+  assert.deepStrictEqual(got, [["Combat Helmet", "Head", "0 free of 4", ["Gone", "Charlie", "Bravo", "Alpha"]]]);
+  assert.strictEqual(off, true);
+});
+
+await t("a ranked-war piece has a line of its own, and Loan on the plain line never lends it", async () => {
+  const FLEX = [piece(631, "Flexible Body Armor"),
+    { ...piece(632, "Flexible Body Armor"), glowClass: "glow-yellow", bonuses: [bonus("Impregnable", "12% reduced melee damage"), blank] },
+    piece(633, "Flexible Body Armor")];
+  const { ctx, p, posts } = await open({ armourPages: [FLEX], accept: ["Defensive"] });
+  await view(p, "armour");
+  const before = await lines(p);
+  const marks = await p.$$eval("#mgr-arm-list .mgr-arm-row", (els) => els.map((e) => [!!e.querySelector(".mgr-arm-dot"), e.innerText.includes("Impregnable")]));
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await loanOnLine(p, 0);
+  await countIs(p, "Flexible Body Armor", "1 free of 2");
+  await p.selectOption("#mgr-arm-member", "1000003");
+  await loanOnLine(p, 0);
+  await countIs(p, "Flexible Body Armor", "0 free of 2");
+  const after = await lines(p);
+  await ctx.close();
+  assert.deepStrictEqual(before.map((l) => l[2]), ["2 free of 2", "1 free of 1"]);
+  assert.deepStrictEqual(marks, [[false, false], [true, true]]);
+  assert.deepStrictEqual(actions(posts), ["loan 631 Defensive Alpha [1000001]", "loan 633 Defensive Charlie [1000003]"]);
+  assert.strictEqual(after[1][2], "1 free of 1");
+});
+
+await t("on a phone the Armour lines and their holders fit the panel", async () => {
+  // Six long-named holders who have left: the widest chips there are.
+  const LONG = Array.from({ length: 6 }, (_, i) => piece(641 + i, "Combat Helmet", { userID: 1000100 + i, playername: "Longnamedmember" + i }));
+  const { ctx, p } = await open({ width: 375, armourPages: [[...LONG, piece(647, "Combat Helmet")]] });
+  await view(p, "armour");
+  const got = await p.evaluate(() => {
+    const list = document.getElementById("mgr-arm-list"), edge = list.getBoundingClientRect().right;
+    const back = document.querySelector("#mgr-arm-list .mgr-arm-back").getBoundingClientRect();
+    const chips = [...list.querySelectorAll(".mgr-arm-chip")];
+    // Chips with a holder's name cut short, or a ↩ cut off by the chip or the panel.
+    const cut = chips.filter((c) => {
+      const who = c.querySelector(".mgr-arm-who"), b = c.querySelector(".mgr-arm-back").getBoundingClientRect();
+      return who.scrollWidth > who.clientWidth || b.right > c.getBoundingClientRect().right + 0.5 || b.right > edge + 0.5;
+    }).length;
+    return { listOver: list.scrollWidth - list.clientWidth, w: back.width, h: back.height, chips: chips.length, cut };
+  });
+  await ctx.close();
+  assert.ok(got.listOver <= 0 && got.w >= 28 && got.h >= 28, JSON.stringify(got));
+  assert.strictEqual(got.chips, 6);
+  assert.strictEqual(got.cut, 0, JSON.stringify(got));
 });
 
 // ── Torn's rules: the armoury page is read only on a tap ─────────────────

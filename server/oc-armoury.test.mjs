@@ -254,6 +254,36 @@ test('an armour loan or retrieve names Defensive first, then the older Armor', (
   assert.deepEqual(t('armor', ''), ['Defensive', 'Armor']);
 });
 
+// The Armour view's lines: one per piece name, each with the pieces it
+// stands for (their places in the list), and the order of the holders under
+// a line.
+test('armour lists one line per piece name in list order; a ranked-war piece is a line of its own', () => {
+  const pieces = A().mgr_armourPieces(ARMOUR);
+  const g = lift('mgr_armourGroups')(pieces);
+  assert.deepEqual(g.map((x) => [x.key, x.part, x.rows.map((i) => pieces[i].armoryID)]), [
+    ['Combat Helmet', 'head', [33, 32]], ['Bulletproof Vest', 'body', [38]], ['rw:35', 'body', [35]],
+    ['Combat Pants', 'legs', [36]], ['Combat Gloves', 'hands', [39]], ['Combat Boots', 'feet', [31]], ['Hazmat Suit', '', [34]],
+  ]);
+  assert.deepEqual(g.map((x) => x.name), ['Combat Helmet', 'Bulletproof Vest', 'Flexible Body Armor', 'Combat Pants', 'Combat Gloves', 'Combat Boots', 'Hazmat Suit']);
+  assert.equal(g[2].rarity, 'yellow');
+  assert.deepEqual(g[2].bonuses, pieces[g[2].rows[0]].bonuses);
+  assert.equal(g[0].rarity, '');
+});
+
+test('holders under a line: ex-members first, then longest offline, then no time; no member list keeps list order', () => {
+  const order = lift('mgr_holderOrder');
+  const held = (armoryID, id, name) => ({ armoryID, holder: id ? { id, name } : null });
+  const pieces = [held(41, '1000001', 'Alpha'), held(42), held(43, '1000009', 'Gone'), held(44, '1000003', 'Charlie'), held(45, '1000002', 'Bravo'), held(46, '1000004', 'Delta')];
+  const seen = new Map([['1000001', { status: 'Online', timestamp: 1000 }], ['1000002', { status: 'Idle', timestamp: 500 }],
+    ['1000003', { status: 'Offline', timestamp: 100 }], ['1000004', { status: 'Offline' }]]);
+  const ids = (m) => order(pieces, [0, 1, 2, 3, 4, 5], m).map((i) => pieces[i].armoryID);
+  assert.deepEqual(ids(seen), [43, 44, 45, 41, 46]);
+  assert.deepEqual(ids(null), [41, 43, 44, 45, 46]);
+  assert.deepEqual(ids(new Map()), [41, 43, 44, 45, 46]);
+  // Only the rows asked about, in their own order when the times tie.
+  assert.deepEqual(order(pieces, [4, 0], new Map([['1000001', { timestamp: 7 }], ['1000002', { timestamp: 7 }]])).map((i) => pieces[i].armoryID), [45, 41]);
+});
+
 test('3.2.92 in both places, and the meta file is the header', () => {
   const end = '// ==/UserScript==';
   assert.equal(META, SRC.slice(0, SRC.indexOf(end) + end.length) + '\n');
