@@ -154,26 +154,14 @@ test('a time a little ahead of this clock reads as now', () => {
   assert.equal(seen()('1000001', new Map([['1000001', la('Online', -30)]]), NOW).text, 'now');
 });
 
-// Who "Loan to" offers: the member names the tab loaded (id -> name) and the
-// ranked-war copies listed, each with its holder or null.
+// Who Weapons' "Loan to" offers: every member the tab loaded (id -> name),
+// whether or not they hold one of the ranked-war copies listed.
 const offered = () => new Function(fn('mgr_loanCandidates') + '\nreturn mgr_loanCandidates;')();
 const NAMES = new Map([['1000001', 'Alpha'], ['1000003', 'Charlie'], ['1000002', 'Bravo']]);
 
-test('Loan to offers only members holding none of the copies, by name', () => {
-  const copies = [
-    { armoryID: 12, holder: null },
-    { armoryID: 13, holder: { id: '1000002', name: 'Bravo' } },
-    { armoryID: 14, holder: { id: '1000009', name: 'Gone' } },
-  ];
-  assert.deepEqual(offered()(NAMES, copies), [['1000001', 'Alpha'], ['1000003', 'Charlie']]);
-});
-
-test('with every copy free, Loan to offers every member', () => {
-  assert.deepEqual(offered()(NAMES, [{ armoryID: 12, holder: null }]), [['1000001', 'Alpha'], ['1000002', 'Bravo'], ['1000003', 'Charlie']]);
-});
-
-test('a holder id given as a number still leaves that member out', () => {
-  assert.deepEqual(offered()(NAMES, [{ armoryID: 13, holder: { id: 1000002, name: 'Bravo' } }]), [['1000001', 'Alpha'], ['1000003', 'Charlie']]);
+test('Loan to offers every member, holders of a copy too, by name', () => {
+  const copies = [{ armoryID: 12, holder: null }, { armoryID: 13, holder: { id: '1000002', name: 'Bravo' } }];
+  assert.deepEqual(offered()(NAMES, copies), [['1000001', 'Alpha'], ['1000002', 'Bravo'], ['1000003', 'Charlie']]);
 });
 
 // The Armour view: every armour piece, the body part each covers, and who

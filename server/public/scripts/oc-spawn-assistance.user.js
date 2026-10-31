@@ -6955,8 +6955,8 @@
     // armoury page the first time it is shown after the tab opens, and keeps
     // its own list, "Loan to" pick and search.
     // Weapons: each ranked-war weapon copy (rarity, bonuses, who holds it).
-    // "Loan to" offers only members who hold none of these copies, so whoever
-    // is lent one drops out (their pick with them) until it is taken back.
+    // "Loan to" offers every member, holders too; after a loan the pick goes
+    // back to "Loan to…", so a second weapon for anyone takes a fresh pick.
     // Armour: every armour piece, head to feet. "Loan to" offers everyone
     // short of a full set and keeps the pick after a loan, so a set goes out
     // in a row; a second piece for a body part the member holds is refused.
@@ -7176,24 +7176,22 @@
         return { text, cls };
     }
 
-    // Who "Loan to" offers: [id, name] for each member holding none of the
-    // listed copies, by name, so nobody is lent a second one by a slip.
-    function mgr_loanCandidates(nameMap, copies) {
-        const holders = new Set((copies || []).filter(c => c && c.holder).map(c => String(c.holder.id)));
-        return [...(nameMap || new Map()).entries()]
-            .filter(([id]) => !holders.has(String(id)))
-            .sort((a, b) => a[1].localeCompare(b[1]));
+    // Who Weapons' "Loan to" offers: [id, name] for every member, by name,
+    // whether or not they already hold a copy. What stops a second weapon
+    // going out by a slip is the pick clearing after each loan.
+    function mgr_loanCandidates(nameMap) {
+        return [...(nameMap || new Map()).entries()].sort((a, b) => a[1].localeCompare(b[1]));
     }
 
     // Fills a view's "Loan to" with the members it offers: when the view is
     // shown and when a copy changes hands, not on every redraw of the list
     // (replacing an open picker's options closes it). A pick no longer
-    // offered (its member was just lent a weapon, or the last piece of a set)
-    // is dropped from the picker and from what the next Loan sends. Drawn
+    // offered (its member was just lent the last piece of a set) is dropped
+    // from the picker and from what the next Loan sends. Drawn
     // only while that view is the one shown.
     function mgr_renderArmouryPicker(view = mgr_armouryView) {
         const v = mgr_armViews[view];
-        const offered = view === 'armour' ? mgr_armourCandidates(mgr_memberNameMap, v.list) : mgr_loanCandidates(mgr_memberNameMap, v.list);
+        const offered = view === 'armour' ? mgr_armourCandidates(mgr_memberNameMap, v.list) : mgr_loanCandidates(mgr_memberNameMap);
         if (!offered.some(([id]) => id === v.member)) v.member = '';
         const pick = document.getElementById('mgr-arm-member');
         if (!pick || view !== mgr_armouryView) return;
@@ -7285,8 +7283,8 @@
             // when that read lacks the copy. Armour keeps the pick for the
             // rest of the set; it drops once the set is full.
             if (view === 'weapons' && loan && String(v.member) === userID) v.member = '';
-            // Whoever now holds a weapon (or a full set) leaves "Loan to";
-            // whoever gave one back is offered again.
+            // Whoever now holds a full set leaves Armour's "Loan to", and
+            // whoever gave a piece back is offered again.
             mgr_renderArmouryPicker(view);
         } catch (err) {
             failed = String(err && err.message || err).slice(0, 24);

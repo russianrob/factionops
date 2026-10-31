@@ -289,33 +289,34 @@ await t("a member picked while a loan is on its way stays picked for the next on
 // Every line of "Loan to", its "Loan to…" first.
 const offeredNames = (p) => p.$$eval("#mgr-arm-member option", (os) => os.map((o) => o.textContent));
 
-await t("a member who already holds a ranked-war copy is not offered in Loan to", async () => {
+await t("a member who already holds a ranked-war copy is offered in Loan to", async () => {
   const { ctx, p } = await open();
   const names = await offeredNames(p);
   await ctx.close();
-  assert.deepStrictEqual(names, ["Loan to…", "Alpha", "Bravo"]);
+  assert.deepStrictEqual(names, ["Loan to…", "Alpha", "Bravo", "Charlie"]);
 });
 
-await t("whoever is lent a copy drops out of Loan to, and is offered again once it is taken back", async () => {
+await t("whoever is lent a copy stays in Loan to, with the pick back on Loan to…", async () => {
   const { ctx, p } = await open({ accept: ["Primary"] });
   await p.selectOption("#mgr-arm-member", "1000001");
   await p.click('.mgr-arm-loan[data-row="1"]');
   await holderIs(p, 1, "Alpha");
-  const lent = await offeredNames(p);
+  const lent = await offeredNames(p), pick = await picked(p);
   const back = '.mgr-arm-back[data-row="1"]';
   await p.click(back); await p.click(back);
   await p.waitForFunction(() => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[1].innerText.includes("Loan"), null, { timeout: 5000 });
   const returned = await offeredNames(p);
   await ctx.close();
-  assert.deepStrictEqual(lent, ["Loan to…", "Bravo"]);
-  assert.deepStrictEqual(returned, ["Loan to…", "Alpha", "Bravo"]);
+  assert.deepStrictEqual(lent, ["Loan to…", "Alpha", "Bravo", "Charlie"]);
+  assert.strictEqual(pick, "Loan to…");
+  assert.deepStrictEqual(returned, ["Loan to…", "Alpha", "Bravo", "Charlie"]);
 });
 
 // Waits for the loan on its way to land: the list is up and none of its
 // buttons is held back any more.
 const landed = (p) => p.waitForFunction(() => document.querySelector("#mgr-arm-list .mgr-arm-row") && !document.querySelector("#mgr-arm-list button:disabled"), null, { timeout: 5000 });
 
-await t("a tab read again while a loan is on its way shows the copy lent and leaves that member out of Loan to", async () => {
+await t("a tab read again while a loan is on its way shows the copy lent and clears the pick", async () => {
   const { ctx, p, posts } = await open({ pages: [TWO_FREE], accept: ["Primary"], slow: 1500 });
   await p.selectOption("#mgr-arm-member", "1000001");
   await p.click('.mgr-arm-loan[data-row="0"]');
@@ -326,7 +327,7 @@ await t("a tab read again while a loan is on its way shows the copy lent and lea
   const label = await p.textContent('.mgr-arm-loan[data-row="1"]');
   await ctx.close();
   assert.ok(got[0].includes("Alpha"), got[0]);
-  assert.deepStrictEqual(names, ["Loan to…", "Bravo", "Charlie"]);
+  assert.deepStrictEqual(names, ["Loan to…", "Alpha", "Bravo", "Charlie"]);
   assert.strictEqual(after, "Loan to…");
   assert.strictEqual(label, "Pick a member");
   assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]"]);
@@ -347,19 +348,19 @@ await t("a read of the tab that comes back without the copy on its way still cle
   assert.deepStrictEqual(actions(posts), ["loan 502 Primary Alpha [1000001]"]);
 });
 
-await t("a pick whose member holds a copy by the time the tab is read again is dropped, so Loan asks for a new one", async () => {
+await t("a member who holds a copy by the time the tab is read again stays picked, and Loan lends them another", async () => {
   const lentElsewhere = { ...TWO_FREE[0], user: { userID: 1000001, playername: "Alpha" } };
   const { ctx, p, posts } = await open({ pages: [TWO_FREE], rescan: [[lentElsewhere, TWO_FREE[1]]], accept: ["Primary"] });
   await p.selectOption("#mgr-arm-member", "1000001");
   await reopen(p);
   await holderIs(p, 0, "Alpha");
-  const names = await offeredNames(p);
+  const names = await offeredNames(p), pick = await picked(p);
   await p.click('.mgr-arm-loan[data-row="1"]');
-  const label = await p.textContent('.mgr-arm-loan[data-row="1"]');
+  await holderIs(p, 1, "Alpha");
   await ctx.close();
-  assert.deepStrictEqual(names, ["Loan to…", "Bravo", "Charlie"]);
-  assert.strictEqual(label, "Pick a member");
-  assert.deepStrictEqual(actions(posts), []);
+  assert.deepStrictEqual(names, ["Loan to…", "Alpha", "Bravo", "Charlie"]);
+  assert.strictEqual(pick, "Alpha");
+  assert.deepStrictEqual(actions(posts), ["loan 505 Primary Alpha [1000001]"]);
 });
 
 await t("a captcha is shown and not retried with the other type", async () => {
@@ -619,7 +620,7 @@ await t("Armour's Loan to leaves out a full set's holder; Weapons' Loan to does 
   const weapons = await offeredNames(p);
   await ctx.close();
   assert.deepStrictEqual(armour, ["Loan to…", "Alpha", "Charlie"]);
-  assert.deepStrictEqual(weapons, ["Loan to…", "Alpha", "Bravo"]);
+  assert.deepStrictEqual(weapons, ["Loan to…", "Alpha", "Bravo", "Charlie"]);
 });
 
 await t("a full set goes out on one pick, then that member leaves Loan to", async () => {
