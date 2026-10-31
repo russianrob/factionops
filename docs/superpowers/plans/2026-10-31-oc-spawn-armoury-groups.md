@@ -186,7 +186,7 @@ Expected: the unit test FAILs (Bravo is left out), and the five changed browser 
 
 - `mgr_loanCandidates(nameMap)` returns every entry, sorted by name with `localeCompare`.
 - `mgr_renderArmouryPicker` passes only `mgr_memberNameMap` for Weapons.
-- Rewrite the two comments to say what happens now:
+- Rewrite the two comments to say what the code does now:
   - Weapons' "Loan to" offers every member, and the pick goes back to "Loan to…" after a loan, so a second weapon takes a fresh pick;
   - a full set's holder leaves Armour's "Loan to", and whoever gave a piece back is offered again.
 
