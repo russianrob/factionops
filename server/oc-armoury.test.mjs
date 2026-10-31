@@ -284,9 +284,9 @@ test('holders under a line: ex-members first, then longest offline, then no time
   assert.deepEqual(order(pieces, [4, 0], new Map([['1000001', { timestamp: 7 }], ['1000002', { timestamp: 7 }]])).map((i) => pieces[i].armoryID), [45, 41]);
 });
 
-test('3.2.92 in both places, and the meta file is the header', () => {
+test('3.2.93 in both places, and the meta file is the header', () => {
   const end = '// ==/UserScript==';
   assert.equal(META, SRC.slice(0, SRC.indexOf(end) + end.length) + '\n');
-  assert.match(SRC, /^\/\/ @version\s+3\.2\.92$/m);
-  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.92';/);
+  assert.match(SRC, /^\/\/ @version\s+3\.2\.93$/m);
+  assert.match(SRC, /const SCRIPT_VERSION = '3\.2\.93';/);
 });
