@@ -25,7 +25,9 @@
 //           part, how many are free ("N free of M") and one Loan that lends
 //           a free one; who holds the rest is under it, anyone who has left
 //           first, then whoever has been offline longest. A ranked-war
-//           piece keeps a line of its own. Weapons are unchanged.
+//           piece keeps a line of its own. Weapons look the same. In both,
+//           a loan or ↩ that lands while the tab is being read again still
+//           shows once that read is back, so the same piece can't go twice.
 // v3.2.92 — Armoury: an OC analysis that shows the tab again (an automatic
 //           one, or Refresh) no longer reads Torn's armoury page; only a
 //           tap in the Armoury does, as Torn's rules ask. Weapons' "Loan
@@ -7023,16 +7025,19 @@
     // Per view: list, member (the pick, always one "Loan to" offers), query,
     // logged (its working loan type was logged this page view), readFor (the
     // tab opening its list was read for), readingFor (the opening a read in
-    // flight is for), error (a failed read this opening).
+    // flight is for), error (a failed read this opening), pending (the loans
+    // and ↩ Torn accepted, for a read sent before they landed:
+    // mgr_armouryCatchUp).
     const mgr_armViews = {
-        weapons: { list: [], member: '', query: '', logged: false, readFor: 0, readingFor: 0, error: '', noRarity: false },
-        armour: { list: [], member: '', query: '', logged: false, readFor: 0, readingFor: 0, error: '' },
+        weapons: { list: [], member: '', query: '', logged: false, readFor: 0, readingFor: 0, error: '', noRarity: false, pending: [] },
+        armour: { list: [], member: '', query: '', logged: false, readFor: 0, readingFor: 0, error: '', pending: [] },
     };
     let mgr_armouryView = 'weapons';   // the view shown
     let mgr_armouryOpens = 0;          // how many times the tab was opened
     let mgr_armourCat = '';            // the page category Torn answered armour on
     let mgr_armourCatLogged = false;   // which one was already logged this page view
     let mgr_armouryBusy = null;        // the one loan/retrieve in flight: { view, row, loan }
+    let mgr_armourySeq = 0;            // orders reads sent and changes landed (mgr_armouryCatchUp)
 
     // All rows of one armoury page category ('weapons', 'armour'…), 50 per
     // request, up to Torn's 1000-row cap. Throws when no page answers (no
@@ -7181,11 +7186,21 @@
         if (v.readFor !== mgr_armouryOpens && v.readingFor !== mgr_armouryOpens && !v.error) mgr_readArmouryView(view);
     }
 
+    // A read sent before a loan or ↩ landed can come back with the rows from
+    // before it: that copy with its old holder, free after a loan, so its
+    // Loan could send the same copy again. Each change that landed after the
+    // read was sent is laid over the list it brought; the older ones are in
+    // its rows already, and every read from here on, so they are dropped.
+    function mgr_armouryCatchUp(v, sent) {
+        v.pending = v.pending.filter(a => a.seq > sent);
+        for (const a of v.pending) for (const c of v.list) if (c.armoryID === a.armoryID) c.holder = a.holder;
+    }
+
     // Reads one view's rows from the armoury page, then draws that view if it
     // is still the one shown. A read overtaken by a newer opening of the tab
     // keeps nothing; a failed one shows its error in the list.
     async function mgr_readArmouryView(view) {
-        const open = mgr_armouryOpens, v = mgr_armViews[view];
+        const open = mgr_armouryOpens, v = mgr_armViews[view], sent = ++mgr_armourySeq;
         v.readingFor = open;
         try {
             if (view === 'armour') {
@@ -7201,6 +7216,7 @@
                 v.noRarity = rows.length > 0 && !rows.some(r => r && 'glowClass' in r);
                 if (v.noRarity) mgr_reportArmoury({ noRarity: true, keys: Object.keys(rows[0] || {}) });
             }
+            mgr_armouryCatchUp(v, sent);
             v.readFor = open;
         } catch (e) {
             if (open !== mgr_armouryOpens) return;
@@ -7375,8 +7391,10 @@
             // Show the change at once; the page catches up on the next open.
             copy.holder = loan ? { id: userID, name: userName || `[${userID}]` } : null;
             // A read of the tab made while this was on its way has its own row
-            // for the copy, and that row gets the change too.
+            // for the copy, and that row gets the change too. So does the row
+            // a read still on its way brings, once it lands.
             for (const c of v.list) if (c !== copy && c.armoryID === copy.armoryID) c.holder = copy.holder;
+            v.pending.push({ armoryID: copy.armoryID, holder: copy.holder, seq: ++mgr_armourySeq });
             // A weapon: the member just lent one is never the next pick, even
             // when that read lacks the copy. Armour keeps the pick for the
             // rest of the set; it drops once the set is full.

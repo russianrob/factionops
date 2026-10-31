@@ -71,7 +71,10 @@ async function open(cfg = {}) {
   const posts = [];
   const pages = cfg.pages || [WEAPONS];
   // cfg.rescan, when given, answers every read of the armoury after the first.
-  let reads = 0;
+  // cfg.slowRead holds back every read of the armour after the first by that
+  // many ms, so a read sent while a loan is on its way lands after the loan,
+  // with the rows from before it (this stand-in never shows a loan).
+  let reads = 0, armourReads = 0;
   // Each member-list request gets the next answer in cfg.membersSeq (the last
   // one again after that), and is counted. An answer { httpStatus } is sent as
   // that HTTP status with no body.
@@ -93,6 +96,8 @@ async function open(cfg = {}) {
       if (f.get("step") === "armouryTabContent") {
         if (cfg.noAccess) return r.fulfill({ status: 403, body: "" });
         if (f.get("type") === "weapons" && f.get("start") === "0") reads++;
+        if (f.get("type") !== "weapons" && f.get("start") === "0") armourReads++;
+        if (cfg.slowRead && f.get("type") !== "weapons" && armourReads > 1) await new Promise((res) => setTimeout(res, cfg.slowRead));
         const src = reads > 1 && cfg.rescan ? cfg.rescan : pages;
         // Weapons as cfg.pages; armour on the spelling cfg.armourCat names
         // ("armour" unless set) as cfg.armourPages; the other spelling
@@ -778,6 +783,24 @@ await t("on a phone the Armour lines and their holders fit the panel", async () 
   assert.ok(got.listOver <= 0 && got.w >= 28 && got.h >= 28, JSON.stringify(got));
   assert.strictEqual(got.chips, 6);
   assert.strictEqual(got.cut, 0, JSON.stringify(got));
+});
+
+await t("a read of the tab sent while an armour loan is on its way and answered after it still shows the piece lent, so its Loan cannot send it twice", async () => {
+  const { ctx, p, posts } = await open({ accept: ["Defensive"], slow: 1500, slowRead: 2000 });
+  await view(p, "armour");
+  await p.selectOption("#mgr-arm-member", "1000001");
+  await loanOnLine(p, 0);
+  await p.waitForTimeout(300);
+  await p.click('.mgr-sub-tab[data-mgr-tab="armoury"]');
+  await p.waitForSelector("#mgr-arm-list .mgr-arm-row", { timeout: 15000 });
+  await landed(p);
+  const after = await lines(p);
+  // A click as the page gets it, which a greyed-out button ignores.
+  await p.$eval("#mgr-arm-list .mgr-arm-loan", (b) => b.click());
+  await p.waitForTimeout(500);
+  await ctx.close();
+  assert.deepStrictEqual(after[0], ["Combat Helmet", "Head", "0 free of 3", ["Charlie", "Bravo", "Alpha"]]);
+  assert.deepStrictEqual(actions(posts), ["loan 603 Defensive Alpha [1000001]"]);
 });
 
 // ── Torn's rules: the armoury page is read only on a tap ─────────────────
