@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OC Spawn Assistance™
 // @namespace    torn-oc-spawn-assistance
-// @version      3.2.91
+// @version      3.2.92
 // @description  Analyzes faction OC slots vs member availability with scope budget and priority ordering
 // @author       RussianRob
 // @license      All Rights Reserved — OC Spawn Assistance™ name is an unregistered trademark of RussianRob; brand use requires permission
@@ -21,6 +21,11 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHANGELOG
 // ═══════════════════════════════════════════════════════════════════════════════
+// v3.2.92 — Armoury: an OC analysis that shows the tab again (an automatic
+//           one, or Refresh) no longer reads Torn's armoury page; only a
+//           tap in the Armoury does, as Torn's rules ask. Weapons' "Loan
+//           to…" lists every member again, holders included; the pick
+//           still goes back to "Loan to…" after each loan.
 // v3.2.91 — Armoury: a Weapons | Armour switch. Armour lists every piece,
 //           head to feet with free ones first, with its own count line,
 //           search and "Loan to…", which offers everyone short of a full set
@@ -444,7 +449,7 @@
     let _lastPendingDelays = {};     // v3.1.49: per-member pending flyer delays (crimeId::memberId → seconds)
     let _lastRecentCompletions = []; // v3.1.52: last-10 completed crimes for Outcome EV engine
     let _lastAvailableCrimes = [];   // v3.2.13: stash of last fetched crimes (with IDs + slot assignments) for live-success crimeId resolution
-    const SCRIPT_VERSION = '3.2.91';
+    const SCRIPT_VERSION = '3.2.92';
     const SERVER = 'https://tornwar.com';
 
     // Web Push needs a real browser or a home-screen PWA. Apple exposes the
