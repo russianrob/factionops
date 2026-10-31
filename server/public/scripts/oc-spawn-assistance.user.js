@@ -4139,7 +4139,8 @@
         if (opening) populateSettings();
     });
 
-    function switchTab(name) {
+    // restore: an analysis showing the saved tab again, not a tap.
+    function switchTab(name, restore = false) {
         document.querySelectorAll('.oc-tab').forEach(t => {
             t.classList.toggle('oc-tab-active', t.dataset.tab === name);
         });
@@ -4152,7 +4153,7 @@
         // Close settings panel when switching away from admin
         if (name !== 'admin') document.getElementById('oc-settings-panel').style.display = 'none';
         // Load manager content when switching to it
-        if (name === 'manager')  loadManagerTab();
+        if (name === 'manager')  loadManagerTab(restore);
         if (name === 'coaching') loadCoachingTab();
         // v3.2.10: payouts tab removed (moved to FactionOps).
         // Init metrics tab when switching to it
@@ -7301,7 +7302,7 @@
         setTimeout(() => { if (again.isConnected) { again.textContent = was; delete again.dataset.busy; } }, 3000);
     }
 
-    function loadManagerTab() {
+    function loadManagerTab(restore = false) {
         const container = document.getElementById('oc-tab-manager');
         // Only render sub-tab bar once; preserve if already there
         if (!container.querySelector('.mgr-sub-tab-bar')) {
@@ -7323,6 +7324,14 @@
                 });
             });
         }
+        // An analysis that shows this tab again (an automatic one, or
+        // Refresh) leaves the Armoury as it is: Torn's armoury page is read
+        // only on a tap in it (the sub-tab, the Manager tab, the
+        // Weapons/Armour switch, Loan, ↩). That holds whatever the Armoury
+        // shows, its error included, so a first open that failed is not
+        // tried again by itself. The other sub-tabs read the Torn API and
+        // tornwar, and load again.
+        if (restore && mgr_currentSubTab === 'armoury') return;
         loadManagerSubTab(mgr_currentSubTab);
     }
 
@@ -8141,7 +8150,7 @@
                 // gets bumped to admin instead.
                 const validTabs = ['profile', 'admin', 'manager', 'metrics', 'engines'];
                 if (lastTab === 'coaching') lastTab = 'admin';
-                switchTab(validTabs.includes(lastTab) ? lastTab : 'admin');
+                switchTab(validTabs.includes(lastTab) ? lastTab : 'admin', true);
             } else {
                 switchTab('profile');
             }

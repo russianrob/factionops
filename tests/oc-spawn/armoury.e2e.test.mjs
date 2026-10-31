@@ -42,8 +42,11 @@ const ARMOUR = [piece(601, "Combat Boots", BRAVO), piece(602, "Combat Helmet", B
 // one of them named for a body part.
 const WRONG_TAB = [...WEAPONS, plain(510, 9510, "Boxing Gloves", "Melee")];
 
-// GM_* as a userscript manager gives them.
+// GM_* as a userscript manager gives them. With cfg.admin, tornwar's OC data
+// names the viewer, an officer who may see the Manager tab, so every analysis
+// ends by showing the saved tab (Manager) again, as it does for an officer.
 const preamble = (cfg) => `(() => {
+  const admin = ${!!cfg.admin};
   const store = { oc_spawn_api_key: "testkey1234", oc_last_tab: "manager" };
   window.unsafeWindow = window;
   window.GM_getValue = (k, d) => (k in store ? store[k] : d);
@@ -56,6 +59,7 @@ const preamble = (cfg) => `(() => {
     let body = null;
     if (u.startsWith("https://tornwar.com/api/debug/client-log")) { window.__logs.push(JSON.parse(o.data)); body = "{}"; }
     else if (u.startsWith("https://tornwar.com/api/oc/settings")) body = JSON.stringify({ isAdmin: true, factionId: 42 });
+    else if (admin && u.startsWith("https://tornwar.com/api/oc/spawn-key")) body = JSON.stringify({ viewer: { playerId: 1000001, playerName: "Alpha", position: "Leader", hasFactionAccess: true } });
     else body = JSON.stringify({});
     setTimeout(() => o.onload && o.onload({ status: 200, responseText: body, response: body }), 20);
   };
@@ -707,6 +711,48 @@ await t("↩ in Armour takes that piece back as Defensive", async () => {
   await p.waitForFunction(() => document.querySelectorAll("#mgr-arm-list .mgr-arm-row")[1].innerText.includes("Loan"), null, { timeout: 5000 });
   await ctx.close();
   assert.deepStrictEqual(actions(posts), ["retrieve 602 Defensive Bravo [1000002]"]);
+});
+
+// ── Torn's rules: the armoury page is read only on a tap ─────────────────
+// Taps Refresh and waits for the analysis it starts to finish, and a little
+// longer, so a read it set off would have been sent. Refresh ignores a tap
+// within 3 s of the page's own analysis, so that is waited out first.
+const refresh = async (p) => {
+  await p.waitForTimeout(3100);
+  await p.evaluate(() => { document.getElementById("oc-spawn-status").textContent = ""; });
+  await p.click("#oc-spawn-refresh");
+  await p.waitForFunction(() => /Last updated/.test(document.getElementById("oc-spawn-status")?.textContent || ""), null, { timeout: 15000 });
+  await p.waitForTimeout(1500);
+};
+
+// Refresh runs the same analysis as the automatic ones (a new scope, coming
+// back to the crimes tab), and each ends by showing the saved tab again.
+await t("an analysis that shows the Armoury again reads nothing and leaves it as it was; tapping the Manager tab reads it", async () => {
+  const { ctx, p, posts } = await open({ admin: true });
+  await p.evaluate(() => { document.getElementById("mgr-arm-list").dataset.mark = "1"; });
+  await refresh(p);
+  const shown = await p.evaluate(() => getComputedStyle(document.getElementById("oc-tab-manager")).display !== "none");
+  const kept = await p.evaluate(() => document.getElementById("mgr-arm-list")?.dataset.mark || "");
+  const quiet = readTypes(posts);
+  await p.click("#oc-manager-tab");
+  await p.waitForSelector("#mgr-arm-list .mgr-arm-row", { timeout: 15000 });
+  const tapped = readTypes(posts);
+  await ctx.close();
+  assert.ok(shown);
+  assert.strictEqual(kept, "1");
+  assert.deepStrictEqual(quiet, ["weapons"]);
+  assert.deepStrictEqual(tapped, ["weapons", "weapons"]);
+});
+
+await t("an analysis after a first open that could not read the members leaves the error and reads nothing", async () => {
+  const { ctx, p, posts, calls } = await open({ admin: true, membersSeq: [() => ({ httpStatus: 500 })], wait: ".oc-error" });
+  const before = calls.members;
+  await refresh(p);
+  const text = await p.textContent("#mgr-sub-content");
+  await ctx.close();
+  assert.ok(/Couldn't read the armoury/.test(text), text);
+  assert.strictEqual(calls.members, before);
+  assert.deepStrictEqual(readTypes(posts), []);
 });
 
 await b.close();
